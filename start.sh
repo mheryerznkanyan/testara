@@ -59,7 +59,7 @@ cd frontend && npm install --silent && cd ..
 if [ ! -f .testara_setup_done ]; then
     echo ""
     echo "Setting up Xcode project..."
-    $PYTHON add_test_file.py
+    $PYTHON backend/app/utils/add_test_file.py
     if [ $? -eq 0 ]; then
         touch .testara_setup_done
         echo ""
