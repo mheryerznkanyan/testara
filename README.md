@@ -34,7 +34,7 @@ cp .env.example .env
 
 ### 3. Open in browser
 
-- **Frontend:** http://localhost:8501
+- **Frontend:** http://localhost:3000
 - **API:** http://localhost:8000
 
 ---
@@ -68,7 +68,7 @@ python -m rag.cli ingest \
 ### 2. Generate Tests
 
 **Via Frontend UI:**
-- Open http://localhost:8501
+- Open http://localhost:3000
 - Enter: "Test login with valid credentials"
 - Click "Generate"
 - Copy the XCTest code
@@ -89,7 +89,7 @@ Copy generated code → paste into your XCUITest target → run!
 ## 🏗️ Architecture
 
 ```
-Next.js Frontend (port 8501)
+Next.js Frontend (port 3000)
          ↓
   FastAPI Backend (port 8000)
          ↓
