@@ -34,65 +34,62 @@ class LLMGeneratedTest: XCTestCase {
     else:
         print(f"✅ File already exists: {test_file_path}")
     
+    # Check if file is already referenced in the Xcode project
+    pbxproj_path = Path(project_path) / "project.pbxproj"
+    if pbxproj_path.exists():
+        content = pbxproj_path.read_text()
+        if "LLMGeneratedTest.swift" in content:
+            print("✅ Already registered in Xcode project")
+            return True
+
     # Try to add to Xcode project using pbxproj
     try:
         from pbxproj import XcodeProject
-        
-        print(f"\nAdding file to Xcode project: {project_path}")
-        project = XcodeProject.load(project_path)
-        
-        # Get relative path from project root
-        rel_path = os.path.relpath(test_file_path, Path(project_path).parent)
-        
-        # Add file to project
-        project.add_file(rel_path, target_name=ui_test_target)
-        
-        # Save project
-        project.save()
-        print(f"✅ Added to target '{ui_test_target}' in Xcode project")
-        
-    except ImportError:
-        print("\n⚠️  pbxproj not installed")
-        print("Installing pbxproj...")
-        os.system("pip install pbxproj --quiet")
-        
-        # Try again
-        from pbxproj import XcodeProject
-        project = XcodeProject.load(project_path)
+
+        print(f"\nAdding file to Xcode project: {pbxproj_path}")
+        project = XcodeProject.load(str(pbxproj_path))
+
         rel_path = os.path.relpath(test_file_path, Path(project_path).parent)
         project.add_file(rel_path, target_name=ui_test_target)
         project.save()
         print(f"✅ Added to target '{ui_test_target}' in Xcode project")
-        
+
     except Exception as e:
-        print(f"\n❌ Failed to modify Xcode project: {e}")
-        print("\n📝 Manual steps required:")
+        print(f"\n⚠️  Could not auto-add to Xcode project: {e}")
+        print("\n📝 Manual step required:")
         print(f"1. Open {project_path} in Xcode")
         print(f"2. Right-click '{ui_test_target}' folder → Add Files")
         print(f"3. Select: {test_file_path}")
         print(f"4. Make sure '{ui_test_target}' target is checked")
-        return False
-    
+        # Don't fail — the file exists on disk, user can add manually
+        return True
+
     return True
 
 
 def main():
     """Run from command line or import as module"""
-    
-    # Load settings from .env if available
+    import glob
     from dotenv import load_dotenv
     load_dotenv()
-    
+
     project_root = os.getenv("PROJECT_ROOT")
     xcode_project = os.getenv("XCODE_PROJECT")
     ui_test_target = os.getenv("XCODE_UI_TEST_TARGET")
-    
+
+    # Auto-detect from PROJECT_ROOT if not explicitly set
+    if project_root and not xcode_project:
+        matches = glob.glob(str(Path(project_root) / "*.xcodeproj"))
+        if matches:
+            xcode_project = matches[0]
+    if xcode_project and not ui_test_target:
+        ui_test_target = Path(xcode_project).stem + "UITests"
+
     if not all([project_root, xcode_project, ui_test_target]):
         print("❌ Missing environment variables")
         print("Required in .env:")
         print("  - PROJECT_ROOT")
-        print("  - XCODE_PROJECT")
-        print("  - XCODE_UI_TEST_TARGET")
+        print("(XCODE_PROJECT and XCODE_UI_TEST_TARGET are auto-detected)")
         sys.exit(1)
     
     print("🔧 Testara Setup: Adding test file to Xcode project")
