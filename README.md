@@ -30,7 +30,16 @@ cp .env.example .env
 
 ```bash
 ./start.sh
+
+# Or use the enhanced version with beautiful terminal UI:
+./start_enhanced.sh
 ```
+
+**Enhanced version features:**
+- 🎨 Colorful ASCII art banner
+- ✅ Visual status indicators
+- 📊 Formatted tables for config and services
+- 🌈 Rich terminal experience
 
 ### 3. Open in browser
 
