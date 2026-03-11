@@ -6,31 +6,36 @@
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+- **macOS** with Xcode installed (required for iOS simulators)
+- **Python 3.11+**
+- **Node.js 20+**
+- Anthropic API key ([get one](https://console.anthropic.com/))
+- Your iOS app source code
+
+### 1. Configure
+
 ```bash
 git clone https://github.com/mheryerznkanyan/testara.git
 cd testara
 
-# 1. Configure
 cp .env.example .env
-# Edit .env: add your ANTHROPIC_API_KEY
-
-# 2. Start everything with Docker
-docker-compose up -d
-
-# 3. Open in browser
-# Frontend: http://localhost:3000
-# API: http://localhost:8000
+# Edit .env:
+#   - Set ANTHROPIC_API_KEY to your API key
+#   - Set PROJECT_ROOT to the absolute path of your iOS project
 ```
 
-**That's it!** ✨
+### 2. Start
 
----
+```bash
+./start.sh
+```
 
-## 📋 What You Need
+### 3. Open in browser
 
-- Docker Desktop ([download](https://www.docker.com/products/docker-desktop))
-- Anthropic API key ([get one](https://console.anthropic.com/))
-- Your iOS app source code
+- **Frontend:** http://localhost:8501
+- **API:** http://localhost:8000
 
 ---
 
@@ -42,10 +47,8 @@ docker-compose up -d
 # Required
 ANTHROPIC_API_KEY=your_key_here
 
-# Your iOS app (for indexing)
+# Your iOS app (the Xcode project and scheme are auto-detected)
 PROJECT_ROOT=/path/to/your/ios/app
-XCODE_PROJECT=/path/to/YourApp.xcodeproj
-XCODE_SCHEME=YourApp
 ```
 
 ---
@@ -55,9 +58,9 @@ XCODE_SCHEME=YourApp
 ### 1. Index Your iOS App
 
 ```bash
-docker-compose exec backend python -m rag.cli ingest \
-  --app-dir /app/ios-app \
-  --persist /app/rag_store
+python -m rag.cli ingest \
+  --app-dir /path/to/your/ios/app \
+  --persist ./rag_store
 ```
 
 *APP_CONTEXT.md will be auto-generated during indexing*
@@ -65,7 +68,7 @@ docker-compose exec backend python -m rag.cli ingest \
 ### 2. Generate Tests
 
 **Via Frontend UI:**
-- Open http://localhost:3000
+- Open http://localhost:8501
 - Enter: "Test login with valid credentials"
 - Click "Generate"
 - Copy the XCTest code
@@ -86,7 +89,7 @@ Copy generated code → paste into your XCUITest target → run!
 ## 🏗️ Architecture
 
 ```
-Next.js Frontend (port 3000)
+Next.js Frontend (port 8501)
          ↓
   FastAPI Backend (port 8000)
          ↓
@@ -94,8 +97,6 @@ Next.js Frontend (port 3000)
          ↓
    Generated XCTest Code
 ```
-
-**All running in Docker containers.**
 
 ---
 
@@ -111,17 +112,15 @@ Next.js Frontend (port 3000)
 
 **Backend won't start?**
 ```bash
-docker-compose logs backend
+# Check Python dependencies
+pip install -e .
 ```
 
 **Can't connect to frontend?**
 ```bash
-docker-compose ps  # Check if containers are running
-```
-
-**Restart everything:**
-```bash
-docker-compose restart
+# Make sure both services are running
+# Backend: uvicorn app.main:app --port 8000
+# Frontend: npm run dev (in frontend/)
 ```
 
 ---

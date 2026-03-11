@@ -1,10 +1,39 @@
 """Configuration settings using Pydantic BaseSettings"""
+import glob
+import logging
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
+logger = logging.getLogger(__name__)
+
 # Resolve .env relative to project root (two levels up from this file)
 _ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+
+
+def _find_xcodeproj(project_root: str) -> str:
+    """Auto-detect .xcodeproj inside PROJECT_ROOT."""
+    if not project_root:
+        return ""
+    matches = glob.glob(str(Path(project_root) / "*.xcodeproj"))
+    if matches:
+        logger.info(f"Auto-detected Xcode project: {matches[0]}")
+        return matches[0]
+    return ""
+
+
+def _infer_scheme(xcodeproj: str) -> str:
+    """Infer scheme name from .xcodeproj filename."""
+    if not xcodeproj:
+        return ""
+    return Path(xcodeproj).stem
+
+
+def _infer_ui_test_target(xcodeproj: str) -> str:
+    """Infer UI test target name from .xcodeproj filename."""
+    if not xcodeproj:
+        return ""
+    return Path(xcodeproj).stem + "UITests"
 
 
 class Settings(BaseSettings):
@@ -26,10 +55,10 @@ class Settings(BaseSettings):
     # App identity used as fallback when the RAG route doesn't receive one
     default_app_name: str = "SampleApp"
 
-    # Xcode project path for running tests
+    # Xcode project path for running tests (auto-detected from PROJECT_ROOT if empty)
     xcode_project: str = ""
-    xcode_scheme: str = "SampleApp"
-    xcode_ui_test_target: str = "SampleAppUITests"
+    xcode_scheme: str = ""
+    xcode_ui_test_target: str = ""
 
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
@@ -43,3 +72,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Auto-detect Xcode settings from PROJECT_ROOT when not explicitly set
+if not settings.xcode_project:
+    settings.xcode_project = _find_xcodeproj(settings.project_root)
+if not settings.xcode_scheme:
+    settings.xcode_scheme = _infer_scheme(settings.xcode_project)
+if not settings.xcode_ui_test_target:
+    settings.xcode_ui_test_target = _infer_ui_test_target(settings.xcode_project)
