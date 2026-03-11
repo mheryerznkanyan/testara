@@ -44,3 +44,4 @@ rag_store/
 
 # Logs
 *.log
+.testara_setup_done

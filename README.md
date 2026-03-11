@@ -47,9 +47,21 @@ cp .env.example .env
 # Required
 ANTHROPIC_API_KEY=your_key_here
 
-# Your iOS app (the Xcode project and scheme are auto-detected)
+# Your iOS app
 PROJECT_ROOT=/path/to/your/ios/app
+XCODE_PROJECT=/path/to/YourApp.xcodeproj
+XCODE_UI_TEST_TARGET=YourAppUITests
 ```
+
+**First-time setup:** `./start.sh` automatically:
+- Creates `LLMGeneratedTest.swift` in your UI test target
+- Adds it to your Xcode project (using `pbxproj`)
+- Generated tests will be written to this file
+
+**If auto-setup fails,** manually add the file:
+1. Create `YourAppUITests/LLMGeneratedTest.swift` (empty file)
+2. In Xcode: Right-click test target → Add Files → Select the file
+3. Make sure your UI test target is checked
 
 ---
 

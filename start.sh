@@ -50,9 +50,21 @@ source "$VENV_DIR/bin/activate"
 # Install dependencies
 echo "Installing backend dependencies..."
 pip install -e . --quiet
+pip install pbxproj python-dotenv --quiet
 
 echo "Installing frontend dependencies..."
 cd frontend && npm install --silent && cd ..
+
+# Setup Xcode test file (first run only)
+if [ ! -f .testara_setup_done ]; then
+    echo ""
+    echo "Setting up Xcode project..."
+    $PYTHON add_test_file.py
+    if [ $? -eq 0 ]; then
+        touch .testara_setup_done
+        echo ""
+    fi
+fi
 
 # Start backend
 echo "Starting backend on port 8000..."
