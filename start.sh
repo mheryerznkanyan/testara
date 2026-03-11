@@ -62,7 +62,7 @@ BACKEND_PID=$!
 cd ..
 
 # Start frontend
-echo "Starting frontend on port 8501..."
+echo "Starting frontend on port 3000..."
 cd frontend
 npm run dev &
 FRONTEND_PID=$!
@@ -70,7 +70,7 @@ cd ..
 
 echo ""
 echo "Testara is running!"
-echo "  Frontend: http://localhost:8501"
+echo "  Frontend: http://localhost:3000"
 echo "  API:      http://localhost:8000"
 echo ""
 
