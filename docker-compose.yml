@@ -11,22 +11,19 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PROJECT_ROOT=/app/ios-app
       - RAG_PERSIST_DIR=/app/rag_store
+      - RAG_COLLECTION=${RAG_COLLECTION:-ios_app}
     volumes:
       - ./rag_store:/app/rag_store
-      - ${IOS_APP_PATH:-./ios-app}:/app/ios-app:ro
+      - ${PROJECT_ROOT:-./ios-app}:/app/ios-app:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-  ui:
+  frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.ui
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
-      - "8501:8501"
+      - "3000:3000"
     environment:
-      - BACKEND_URL=http://backend:8000
-      - PROJECT_ROOT=/app/ios-app
-    volumes:
-      - ${IOS_APP_PATH:-./ios-app}:/app/ios-app:ro
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - backend
-    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0
