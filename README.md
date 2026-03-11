@@ -55,8 +55,6 @@ ANTHROPIC_API_KEY=your_key_here
 
 # Your iOS app
 PROJECT_ROOT=/path/to/your/ios/app
-XCODE_PROJECT=/path/to/YourApp.xcodeproj
-XCODE_UI_TEST_TARGET=YourAppUITests
 ```
 
 **First-time setup:** `./start.sh` automatically:
@@ -147,13 +145,6 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE)
-
----
-
-## 🔗 Links
-
-- **GitHub:** https://github.com/mheryerznkanyan/testara
-- **Issues:** https://github.com/mheryerznkanyan/testara/issues
 
 ---
 
