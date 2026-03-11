@@ -117,7 +117,6 @@ Next.js Frontend (port 3000)
 ## 📚 Documentation
 
 - **[Setup Guide](DEPLOYMENT.md)** — Advanced setup options
-- **[Settings](SETTINGS-GUIDE.md)** — Configuration details
 - **[Contributing](CONTRIBUTING.md)** — How to contribute
 
 ---
