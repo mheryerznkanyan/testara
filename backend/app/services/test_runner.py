@@ -232,6 +232,14 @@ class TestRunner:
             await asyncio.sleep(3)
             logger.info("Simulator boot wait complete")
 
+            # Force English locale on the simulator to prevent keyboard language switching
+            for key, value in [("AppleLanguages", "-array en"), ("AppleLocale", "-string en_US")]:
+                await asyncio.create_subprocess_exec(
+                    'xcrun', 'simctl', 'spawn', device_id,
+                    'defaults', 'write', 'com.apple.Preferences', key, *value.split(),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+
         except Exception as e:
             logger.error(f"Failed to boot simulator: {e}", exc_info=True)
             raise

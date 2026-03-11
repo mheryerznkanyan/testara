@@ -67,17 +67,13 @@ XCODE_UI_TEST_TARGET=YourAppUITests
 
 ## 🎯 Usage
 
-### 1. Index Your iOS App
+Your iOS app is automatically indexed on first run. To re-index after code changes:
 
 ```bash
-python -m rag.cli ingest \
-  --app-dir /path/to/your/ios/app \
-  --persist ./rag_store
+python -m rag.cli ingest --app-dir "$PROJECT_ROOT" --persist ./rag_store
 ```
 
-*APP_CONTEXT.md will be auto-generated during indexing*
-
-### 2. Generate Tests
+### Generate Tests
 
 **Via Frontend UI:**
 - Open http://localhost:3000
@@ -92,7 +88,7 @@ curl -X POST http://localhost:8000/generate-test-with-rag \
   -d '{"description": "Test login with valid credentials"}'
 ```
 
-### 3. Add to Xcode
+### Run in Xcode
 
 Copy generated code → paste into your XCUITest target → run!
 

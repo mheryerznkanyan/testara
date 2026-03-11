@@ -216,7 +216,7 @@ export default function TestGenerator() {
   /* ─────────────── render ─────────────── */
   return (
     <div className="min-h-full bg-background">
-      <div className="max-w-2xl mx-auto px-6 py-10 space-y-6">
+      <div className="max-w-4xl mx-auto px-6 py-10 space-y-6">
 
         {/* ── Device bar ── */}
         <motion.div

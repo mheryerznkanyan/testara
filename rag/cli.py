@@ -54,7 +54,7 @@ def _generate_app_context(persist_dir: str, collection: str, embed_model: str):
     extractor = AppContextExtractor(rag_service)
     
     # Generate and save
-    output_path = Path(__file__).parent.parent / "APP_CONTEXT.md"
+    output_path = Path(persist_dir) / "APP_CONTEXT.md"
     extractor.save_to_file(str(output_path))
 
 

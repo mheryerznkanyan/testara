@@ -66,6 +66,13 @@ if [ ! -f .testara_setup_done ]; then
     fi
 fi
 
+# Auto-index iOS app if not already indexed
+PROJECT_ROOT=$(grep '^PROJECT_ROOT=' .env | cut -d'=' -f2-)
+if [ -n "$PROJECT_ROOT" ] && [ -d "$PROJECT_ROOT" ] && [ ! -f rag_store/chroma.sqlite3 ]; then
+    echo "Indexing iOS app at $PROJECT_ROOT..."
+    python -m rag.cli ingest --app-dir "$PROJECT_ROOT" --persist ./rag_store
+fi
+
 # Start backend
 echo "Starting backend on port 8000..."
 cd backend
