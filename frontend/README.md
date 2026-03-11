@@ -2,6 +2,8 @@
 
 Modern React UI for Testara iOS test generation.
 
+---
+
 ## 🚀 Quick Start
 
 ```bash
@@ -10,68 +12,151 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:8501
+Open: **http://localhost:3000**
 
-## 🔧 Backend Connection
+---
 
-The frontend expects the FastAPI backend running on `http://localhost:8000`.
+## 🔧 Prerequisites
 
-Start the backend first:
+**Backend must be running first:**
+
 ```bash
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
+Frontend connects to backend at `http://localhost:8000`
+
+---
+
 ## ✨ Features
 
-- **Screen Recording Upload** — Drag & drop video files
-- **Test Description Input** — Plain English test descriptions
-- **Real-time Generation** — API integration with backend
-- **Quality Scoring** — Visual quality report display
-- **Syntax Highlighting** — Swift code with proper formatting
+- **Test Description Input** — Natural language test descriptions
+- **Real-time Generation** — Live API integration
+- **Syntax Highlighting** — Formatted Swift code display
 - **Copy to Clipboard** — One-click code copy
+- **Execution Status** — Test run results and logs
+- **Video Playback** — View recorded test executions
+
+---
 
 ## 🎨 Design
 
-Matches the landing page design:
-- Apple-inspired minimal style
-- Dark theme (black background)
-- Glass morphism effects
+- Apple-inspired minimal interface
+- Dark theme with glass morphism
 - Smooth Framer Motion animations
-- Fully responsive
+- Fully responsive layout
+- Professional developer tool aesthetic
+
+---
 
 ## 📦 Tech Stack
 
-- **Next.js 14** — React framework
+- **Next.js 14** — React framework (App Router)
 - **TypeScript** — Type safety
 - **Tailwind CSS** — Styling
 - **Framer Motion** — Animations
-- **React Syntax Highlighter** — Code display
+- **React Syntax Highlighter** — Code formatting
 
-## 🔗 API Endpoints
+---
 
-- `POST /api/tests/generate` — Generate test from screen recording + description
+## 🔌 API Integration
 
-## 📱 Port
+**Backend endpoint:**
+```
+POST http://localhost:8000/generate-test-with-rag
+```
 
-Runs on port **8501** (same as old Streamlit UI for easy replacement).
+**Request:**
+```json
+{
+  "description": "Test login with valid credentials"
+}
+```
+
+**Response:**
+```json
+{
+  "swift_code": "...",
+  "test_type": "ui",
+  "class_name": "LoginTests"
+}
+```
+
+---
 
 ## 🚢 Deployment
 
 ### Development
+
 ```bash
 npm run dev
 ```
 
+Runs on: http://localhost:3000
+
 ### Production
+
 ```bash
 npm run build
 npm start
 ```
 
 ### Docker
-Update `docker-compose.yml` to use this frontend instead of Streamlit.
+
+Frontend is included in `docker-compose.yml`:
+
+```bash
+docker-compose up frontend
+```
 
 ---
 
-**This replaces the Streamlit UI (`ui/app.py`) with a professional React interface.**
+## 📝 Configuration
+
+**Backend URL** is configured in `next.config.js`:
+
+```javascript
+async rewrites() {
+  return [
+    {
+      source: '/api/:path*',
+      destination: 'http://backend:8000/:path*'
+    }
+  ]
+}
+```
+
+Change `backend:8000` to your backend URL if needed.
+
+---
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+frontend/
+├── src/
+│   ├── app/
+│   │   ├── page.tsx          # Main test generation page
+│   │   ├── layout.tsx        # Root layout
+│   │   ├── globals.css       # Global styles
+│   │   └── settings/         # Settings page
+│   ├── components/           # React components
+│   └── lib/                  # Utilities
+├── public/                   # Static assets
+├── package.json
+└── next.config.js            # Next.js config
+```
+
+### Adding Features
+
+1. Create component in `src/components/`
+2. Import in `src/app/page.tsx`
+3. Style with Tailwind classes
+4. Add animations with Framer Motion
+
+---
+
+Made with ⚡ by Testara

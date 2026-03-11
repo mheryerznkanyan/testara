@@ -1,278 +1,386 @@
-# 📦 Testara Deployment Guide
+# Testara Deployment Guide
 
-**For Pilot Users**
-
----
-
-## 🎯 Recommended: Docker (Easiest)
-
-**Prerequisites:**
-- Docker Desktop installed ([download](https://www.docker.com/products/docker-desktop))
-- Your iOS app source code
-- Anthropic API key
-
-**Time:** 10 minutes
+Complete guide for deploying Testara locally or in production.
 
 ---
 
-## Quick Start (Docker)
-
-### 1. Clone the Repo
-```bash
-git clone https://github.com/mheryerznkanyan/ios-test-automator-v2.git
-cd ios-test-automator-v2
-git checkout v2.0.0-pilot
-```
-
-### 2. Configure
-```bash
-# Create .env file
-cat > .env << EOF
-ANTHROPIC_API_KEY=your_anthropic_key_here
-IOS_APP_PATH=/path/to/your/ios/app
-EOF
-```
-
-### 3. Index Your iOS App (One-Time)
-```bash
-# Run indexing container
-docker run --rm \
-  -v ./rag_store:/app/rag_store \
-  -v /path/to/your/ios/app:/app/ios-app:ro \
-  -e ANTHROPIC_API_KEY=your_key \
-  testara-backend \
-  python -m rag.cli ingest \
-    --app-dir /app/ios-app \
-    --persist /app/rag_store \
-    --collection ios_app
-```
-
-### 4. Start Testara
-```bash
-docker-compose up
-```
-
-### 5. Open in Browser
-- **UI:** http://localhost:8501
-- **API:** http://localhost:8000/docs
-
----
-
-## Alternative: Local Install (Advanced Users)
+## 🚀 Quick Start (Local Development)
 
 ### Prerequisites
-- Python 3.11+
-- pip or uv
 
-### Steps
+- **macOS** (for iOS Simulator)
+- **Python 3.11+**
+- **Node.js 18+** 
+- **Xcode** with Command Line Tools
+- **Anthropic API key**
+
+### Installation
 
 ```bash
-# 1. Clone
-git clone https://github.com/mheryerznkanyan/ios-test-automator-v2.git
-cd ios-test-automator-v2
-git checkout v2.0.0-pilot
+# 1. Clone repository
+git clone https://github.com/mheryerznkanyan/testara.git
+cd testara
 
-# 2. Install
-pip install -e .
+# 2. Run setup script
+./setup.sh
+```
 
-# 3. Configure
-cat > .env << EOF
-ANTHROPIC_API_KEY=your_key
-PROJECT_ROOT=/path/to/your/ios/app
-EOF
+The setup script will:
+- ✅ Check prerequisites
+- ✅ Install Python dependencies
+- ✅ Create `.env` configuration
+- ✅ Optionally index your iOS app
 
-# 4. Index your iOS app
-python -m rag.cli ingest \
+### Manual Setup
+
+If you prefer manual installation:
+
+```bash
+# 1. Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Install dependencies
+pip install -r backend/requirements.txt
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# 4. Index iOS app
+python3 -m rag.cli ingest \
   --app-dir /path/to/your/ios/app \
   --persist ./rag_store \
   --collection ios_app
 
-# 5. Start backend (Terminal 1)
-cd backend
-uvicorn app.main:app --reload
-
-# 6. Start UI (Terminal 2)
-streamlit run ui/app.py
+# 5. Generate app context
+python3 generate_app_context.py
 ```
 
----
+### Running Services
 
-## For Production / Team Use
+#### Backend API
 
-### Option A: Deploy to Cloud (DigitalOcean, AWS, GCP)
-
-**Recommended:** DigitalOcean App Platform (easiest)
-
-1. Fork the repo to your GitHub
-2. Connect to DigitalOcean App Platform
-3. Set environment variables:
-   - `ANTHROPIC_API_KEY`
-   - `PROJECT_ROOT` (mount iOS app as volume)
-4. Deploy
-
-**Cost:** ~$12/mo (basic tier)
-
----
-
-### Option B: Self-Hosted on Company Server
-
-**Requirements:**
-- Linux server with Docker
-- Port 8000 (backend) and 8501 (UI) open
-
-**Setup:**
 ```bash
-# On server
-git clone https://github.com/mheryerznkanyan/ios-test-automator-v2.git
-cd ios-test-automator-v2
+cd backend
+uvicorn app.main:app --reload --port 8000
+```
 
-# Configure
-echo "ANTHROPIC_API_KEY=your_key" > .env
-echo "IOS_APP_PATH=/path/to/ios/app" >> .env
+Access at: http://localhost:8000  
+API docs: http://localhost:8000/docs
 
-# Run
+#### Frontend UI (Optional)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Access at: http://localhost:3000
+
+---
+
+## 🐳 Docker Deployment
+
+### Quick Start
+
+```bash
+# Start all services
 docker-compose up -d
 
-# Access via http://server-ip:8501
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
 ```
 
----
+**Services:**
+- Backend: http://localhost:8000
+- Frontend: http://localhost:3000
 
-## Distributing to Pilot Users
+### First-Time Setup
 
-### Method 1: GitHub Release (Recommended for Pilot)
-
-**What users do:**
-1. Download release: https://github.com/mheryerznkanyan/ios-test-automator-v2/releases/tag/v2.0.0-pilot
-2. Follow README instructions
-3. Run locally with Docker
-
-**Pros:** 
-- Users control their own environment
-- No hosting costs for you
-- Works offline
-
-**Cons:**
-- Requires Docker knowledge
-- Users need their own Anthropic API key
-
----
-
-### Method 2: Hosted Demo (For Sales)
-
-**Setup:**
-- Deploy to DigitalOcean/Heroku
-- Give users a demo URL
-- They upload their iOS app source (or connect via Git)
-
-**Pros:**
-- Zero setup for users
-- You control the experience
-
-**Cons:**
-- Hosting costs (~$12-50/mo)
-- You handle support/uptime
-- Security concerns (users upload source code)
-
----
-
-### Method 3: Installation Script (Best UX)
-
-Create a one-liner install:
+**1. Index your iOS app inside container:**
 
 ```bash
-curl -fsSL https://testara.dev/install.sh | bash
+docker-compose exec backend python -m rag.cli ingest \
+  --app-dir /app/ios-app \
+  --persist /app/rag_store \
+  --collection ios_app
 ```
 
-**install.sh does:**
-- Check prerequisites (Docker, Python)
-- Download latest release
-- Set up .env interactively
-- Run initial indexing
-- Start services
+**2. Generate app context:**
 
-**Pros:**
-- Best user experience
-- One command to install
-- Can update easily
-
-**Cons:**
-- Need to host install.sh somewhere
-- More work upfront
-
----
-
-## What I Recommend for Pilot
-
-### For Now (Week 1-2): GitHub Release
-
-**Setup:**
-1. Create GitHub release notes (I'll draft)
-2. Users clone repo → run Docker
-3. You provide 1-on-1 onboarding calls
-
-**Why:**
-- Fast to ship
-- No hosting costs
-- Technical users can handle it
-
----
-
-### For Scale (After Pilots): Hosted SaaS
-
-**Setup:**
-1. Deploy backend + UI to cloud
-2. Add user auth (email/password)
-3. Charge $100/mo per team
-4. Users access via testara.dev
-
-**Why:**
-- Non-technical users can use it
-- Recurring revenue
-- Easier to support
-
----
-
-## Next Steps (Do This Now)
-
-### 1. Commit Docker Files
 ```bash
-cd /home/openclaw/.openclaw/workspace/ios-test-automator-v2
-git add docker-compose.yml Dockerfile.backend Dockerfile.ui DEPLOYMENT.md
-git commit -m "feat: add Docker deployment setup"
-git push origin main
+docker-compose exec backend python generate_app_context.py
 ```
 
-### 2. Test Docker Build Locally
+### Configuration
+
+**Create `.env` file:**
+
 ```bash
-# Build images
-docker-compose build
+# Required
+ANTHROPIC_API_KEY=your_key_here
 
-# Test run
-docker-compose up
+# iOS App Settings
+PROJECT_ROOT=/path/to/your/ios/app
+XCODE_PROJECT=/path/to/YourApp.xcodeproj
+XCODE_SCHEME=YourApp
+XCODE_UI_TEST_TARGET=YourAppUITests
+
+# Optional
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
+RAG_PERSIST_DIR=./rag_store
+RAG_COLLECTION=ios_app
+PORT=8000
 ```
 
-### 3. Create GitHub Release Notes
+### Docker Compose Services
 
-I'll draft release notes that users can follow to install.
+**`docker-compose.yml` includes:**
+
+- **backend** — FastAPI server (port 8000)
+- **frontend** — Next.js UI (port 3000)
+
+### Stopping Services
+
+```bash
+# Stop services
+docker-compose stop
+
+# Stop and remove containers
+docker-compose down
+
+# Remove volumes too
+docker-compose down -v
+```
 
 ---
 
-## Support for Pilot Users
+## ☁️ Cloud Deployment
 
-**Provide:**
-- GitHub README with installation steps
-- Discord/Slack for questions
-- 15-min onboarding call per pilot user
+### Option 1: DigitalOcean App Platform
 
-**Expected issues:**
-- Docker not installed → send Docker Desktop link
-- Anthropic API key issues → guide them through signup
-- iOS app path wrong → show them how to find it
+**Easiest managed option**
+
+1. Fork repository to your GitHub
+2. Create new App on DigitalOcean
+3. Connect your forked repo
+4. Set environment variables
+5. Deploy
+
+**Environment variables needed:**
+```
+ANTHROPIC_API_KEY
+PROJECT_ROOT
+```
+
+**Cost:** ~$12-25/month
+
+### Option 2: AWS/GCP
+
+**Using Docker Compose:**
+
+1. Launch EC2/Compute Engine instance
+2. Install Docker and Docker Compose
+3. Clone repository
+4. Configure `.env`
+5. Run `docker-compose up -d`
+
+**Cost:** ~$10-50/month depending on instance size
+
+### Option 3: Vercel (Frontend Only)
+
+**Deploy Next.js frontend to Vercel:**
+
+```bash
+cd frontend
+vercel --prod
+```
+
+**Configure environment:**
+- Set `NEXT_PUBLIC_API_URL` to your backend URL
+
+**Backend must be deployed separately**
 
 ---
 
-**Want me to:**
-1. Draft the GitHub release notes?
-2. Create the install.sh script?
-3. Build Docker images and test them?
+## 🔒 Production Checklist
+
+Before deploying to production:
+
+### Security
+
+- [ ] Use HTTPS (SSL/TLS certificates)
+- [ ] Rotate API keys regularly
+- [ ] Implement rate limiting
+- [ ] Add authentication if multi-user
+- [ ] Restrict CORS origins
+- [ ] Use secrets management (not `.env` files)
+
+### Performance
+
+- [ ] Enable production mode (`npm run build` for frontend)
+- [ ] Configure proper logging
+- [ ] Set up monitoring (health checks)
+- [ ] Optimize RAG index size
+- [ ] Configure autoscaling if needed
+
+### Reliability
+
+- [ ] Set up backups (RAG store)
+- [ ] Configure restart policies (Docker)
+- [ ] Implement error tracking (Sentry)
+- [ ] Document recovery procedures
+- [ ] Test failover scenarios
+
+---
+
+## 📊 Monitoring
+
+### Health Checks
+
+**Backend:**
+```bash
+curl http://localhost:8000/health
+```
+
+**Expected response:**
+```json
+{
+  "status": "ok",
+  "llm_configured": true
+}
+```
+
+### Logs
+
+**Docker:**
+```bash
+docker-compose logs -f backend
+docker-compose logs -f frontend
+```
+
+**Local:**
+```bash
+# Backend logs (stdout)
+cd backend
+uvicorn app.main:app --log-level info
+```
+
+---
+
+## 🔄 Updates
+
+### Updating Testara
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Update dependencies
+pip install -r backend/requirements.txt
+cd frontend && npm install
+
+# Restart services
+docker-compose restart
+# or manually restart backend/frontend
+```
+
+### Re-indexing After Code Changes
+
+```bash
+# Re-index iOS app
+python3 -m rag.cli ingest \
+  --app-dir /path/to/your/ios/app \
+  --persist ./rag_store \
+  --collection ios_app
+
+# Regenerate app context
+python3 generate_app_context.py
+
+# Restart backend
+docker-compose restart backend
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Backend Won't Start
+
+**Check Python version:**
+```bash
+python3 --version  # Should be 3.11+
+```
+
+**Check dependencies:**
+```bash
+pip install -r backend/requirements.txt
+```
+
+**Check .env file:**
+```bash
+cat .env | grep ANTHROPIC_API_KEY
+```
+
+### Frontend Won't Connect
+
+**Check backend is running:**
+```bash
+curl http://localhost:8000/health
+```
+
+**Check API proxy configuration:**
+```bash
+cat frontend/next.config.js
+```
+
+### Docker Issues
+
+**Rebuild images:**
+```bash
+docker-compose build --no-cache
+```
+
+**Check logs:**
+```bash
+docker-compose logs backend
+```
+
+**Reset everything:**
+```bash
+docker-compose down -v
+docker-compose up -d
+```
+
+---
+
+## 📞 Support
+
+**Issues:** https://github.com/mheryerznkanyan/testara/issues  
+**Discussions:** https://github.com/mheryerznkanyan/testara/discussions
+
+---
+
+## 📝 Configuration Reference
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | ✅ | - | Anthropic API key |
+| `ANTHROPIC_MODEL` | ❌ | `claude-sonnet-4-5-20250929` | Claude model to use |
+| `PROJECT_ROOT` | ✅ | - | Path to iOS app |
+| `XCODE_PROJECT` | ✅ | - | Path to .xcodeproj |
+| `XCODE_SCHEME` | ✅ | - | Xcode scheme name |
+| `RAG_PERSIST_DIR` | ❌ | `./rag_store` | RAG index location |
+| `RAG_COLLECTION` | ❌ | `ios_app` | Collection name |
+| `PORT` | ❌ | `8000` | Backend port |
+
+---
+
+Made with ⚡ by Testara

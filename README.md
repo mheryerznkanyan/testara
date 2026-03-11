@@ -1,172 +1,279 @@
-# iOS Test Automator v2
+# Testara
 
-Generate XCTest unit tests and XCUITest UI tests from natural language descriptions, powered by **Claude** (via LangChain) and a **RAG** pipeline built on your Swift source code.
-
----
-
-## What It Does
-
-1. **Ingests** your iOS Swift project into a Chroma vector store (screens, accessibility IDs, UI elements).
-2. **Retrieves** relevant context at query time using semantic search (RAG).
-3. **Generates** production-ready Swift test code via Claude, informed by the retrieved context.
-4. **Validates** XCUITest contracts (app launch, explicit waits, assertions).
-5. **Runs** tests via xcodebuild and optionally records video (macOS only, Streamlit UI).
+**AI-powered iOS test automation** — Generate and execute XCTest UI tests from natural language descriptions.
 
 ---
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Streamlit UI                        │
-│  ui/app.py  — natural language input, test history,      │
-│               xcodebuild runner, video recording          │
-└───────────────────────┬─────────────────────────────────┘
-                        │ HTTP (REST)
-┌───────────────────────▼─────────────────────────────────┐
-│                   FastAPI Backend                         │
-│  backend/app/                                            │
-│  ├── main.py          — lifespan, middleware, routers    │
-│  ├── core/            — config (BaseSettings), prompts   │
-│  ├── schemas/         — Pydantic request/response models │
-│  ├── services/        — TestGenerator, RAGService        │
-│  ├── api/routes/      — health, tests endpoints          │
-│  └── utils/           — swift_utils, validators          │
-└───────────────────────┬─────────────────────────────────┘
-                        │ similarity_search
-┌───────────────────────▼─────────────────────────────────┐
-│                     RAG Module                            │
-│  rag/                                                    │
-│  ├── chunker.py  — Swift → Chunk (regex, brace-match)    │
-│  ├── auditor.py  — heuristic accessibility audit         │
-│  ├── store.py    — Chroma build/upsert, file iteration   │
-│  └── cli.py      — ingest / query CLI commands           │
-│                                                          │
-│  Chroma vector store persisted to rag_store/             │
-│  Embeddings: sentence-transformers/all-MiniLM-L6-v2      │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## Setup
-
-### 1. Install Dependencies
+## 🚀 Quick Start
 
 ```bash
-# Recommended: use a virtual environment
-python -m venv .venv && source .venv/bin/activate
+# 1. Clone
+git clone https://github.com/mheryerznkanyan/testara.git
+cd testara
 
-pip install -e .
-# or directly:
-pip install fastapi uvicorn pydantic pydantic-settings langchain langchain-anthropic \
-            langchain-community chromadb sentence-transformers streamlit requests python-dotenv
+# 2. Run setup
+./setup.sh
+
+# 3. Start backend
+cd backend
+uvicorn app.main:app --reload --port 8000
+
+# 4. Start frontend (optional)
+cd ../frontend
+npm install && npm run dev
 ```
 
-### 2. Set Environment Variables
+**Open:** http://localhost:3000
+
+---
+
+## ✨ Features
+
+- ✅ **AI test generation** — Natural language → XCTest code
+- ✅ **RAG-powered** — Analyzes your iOS codebase automatically
+- ✅ **Smart context** — Extracts screens, navigation, accessibility IDs
+- ✅ **Test execution** — Runs tests on iOS Simulator
+- ✅ **Docker support** — One-command deployment
+
+---
+
+## 📋 Requirements
+
+- **macOS** (for iOS Simulator and Xcode)
+- **Python 3.11+**
+- **Node.js 18+** (for frontend)
+- **Xcode** with Command Line Tools
+- **Anthropic API key** (for Claude)
+
+---
+
+## 🔧 Detailed Setup
+
+### Step 1: Clone Repository
 
 ```bash
+git clone https://github.com/mheryerznkanyan/testara.git
+cd testara
+```
+
+### Step 2: Install Python Dependencies
+
+```bash
+# Create virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install packages
+pip install -r backend/requirements.txt
+```
+
+### Step 3: Configure Environment
+
+```bash
+# Copy example config
 cp .env.example .env
-# Edit .env — at minimum set ANTHROPIC_API_KEY and PROJECT_ROOT
+
+# Edit .env and set:
+# - ANTHROPIC_API_KEY (required)
+# - PROJECT_ROOT (path to your iOS app)
+# - XCODE_PROJECT (path to .xcodeproj)
+# - XCODE_SCHEME (your scheme name)
 ```
 
-| Variable | Default | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | _(required)_ | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-5-20250929` | Claude model |
-| `RAG_PERSIST_DIR` | `../rag_store` | Chroma DB path |
-| `PROJECT_ROOT` | _(required for UI)_ | Path to iOS project root |
+**Required settings:**
+```bash
+ANTHROPIC_API_KEY=your_key_here
+PROJECT_ROOT=/path/to/your/ios/app
+XCODE_PROJECT=/path/to/YourApp.xcodeproj
+XCODE_SCHEME=YourApp
+```
 
-### 3. Ingest Your Swift Project
+### Step 4: Index Your iOS App
 
 ```bash
-python -m rag.cli ingest \
-  --app-dir /path/to/YourApp \
+# Index your Swift codebase
+python3 -m rag.cli ingest \
+  --app-dir /path/to/your/ios/app \
   --persist ./rag_store \
   --collection ios_app
+
+# Generate app context
+python3 generate_app_context.py
 ```
 
-Optional: fail early if accessibility IDs are missing:
-```bash
-python -m rag.cli ingest ... --fail-if-missing-ids
-```
-
-Smoke-test retrieval:
-```bash
-python -m rag.cli query \
-  --persist ./rag_store \
-  --collection ios_app \
-  --q "login invalid password" \
-  --k 8
-```
-
-### 4. Run the Backend
+### Step 5: Start Backend
 
 ```bash
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 5. Run the Streamlit UI
+Backend will be available at: http://localhost:8000
+
+### Step 6: Start Frontend (Optional)
 
 ```bash
-# Set PROJECT_ROOT env var or enter it in the sidebar
-export PROJECT_ROOT=/path/to/iOS-test-automator
-streamlit run ui/app.py
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend will be available at: http://localhost:3000
+
+---
+
+## 🎯 How It Works
+
+```
+Your iOS App Code
+      ↓
+   RAG Indexing
+   (AST parsing, semantic analysis)
+      ↓
+   App Context Extraction
+   (screens, navigation, accessibility IDs)
+      ↓
+   AI Enrichment
+   (brief description → detailed test spec)
+      ↓
+   Test Generation
+   (Claude generates XCTest code)
+      ↓
+   Test Execution
+   (runs on iOS Simulator)
+      ↓
+   Generated UI Test + Video Recording
 ```
 
 ---
 
-## API Endpoints
+## 💡 Usage
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | Service info |
-| `GET` | `/health` | Health check (LLM config status) |
-| `POST` | `/generate-test` | Generate test from structured request |
-| `POST` | `/generate-test-with-rag` | Generate test with RAG context auto-retrieval |
-| `POST` | `/generate-tests-batch` | Generate multiple tests in parallel |
-
-### Example: Generate with RAG
+### Generate Test via API
 
 ```bash
 curl -X POST http://localhost:8000/generate-test-with-rag \
   -H "Content-Type: application/json" \
   -d '{
-    "test_description": "Test login with invalid credentials and verify error message",
-    "test_type": "ui"
+    "description": "Test login with valid credentials"
   }'
 ```
 
----
+### Generate Test via Frontend
 
-## Project Structure
+1. Open http://localhost:3000
+2. Enter test description: "Test login with valid credentials"
+3. Click "Generate Test"
+4. Copy generated XCTest code
+5. Add to your Xcode project
 
-```
-ios-test-automator-v2/
-├── backend/app/
-│   ├── main.py              # FastAPI app + lifespan
-│   ├── core/config.py       # Pydantic BaseSettings
-│   ├── core/prompts.py      # XCTest & XCUITest system prompts
-│   ├── schemas/             # Request/response models
-│   ├── services/            # TestGenerator, RAGService
-│   ├── api/routes/          # health.py, tests.py
-│   └── utils/               # swift_utils, validators
-├── rag/
-│   ├── chunker.py           # Swift → Chunks
-│   ├── auditor.py           # Accessibility audit
-│   ├── store.py             # Chroma helpers
-│   └── cli.py               # ingest / query CLI
-├── ui/app.py                # Streamlit frontend
-├── ios-app/                 # Sample iOS app (Swift)
-├── pyproject.toml
-└── .env.example
+### Execute Test
+
+The generated test can be run directly in Xcode or via command line:
+
+```bash
+cd /path/to/your/ios/app
+xcodebuild test \
+  -scheme YourApp \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  -only-testing:YourAppUITests/GeneratedTests
 ```
 
 ---
 
-## Notes
+## 🏗️ Architecture
 
-- RAG parsing uses regex + brace-matching (MVP). For production accuracy, replace with SwiftSyntax.
-- The Streamlit runner (`xcodebuild`, video recording) requires macOS with Xcode installed.
-- The backend and RAG module work cross-platform.
+```
+┌─────────────────────────────────────────────────────────┐
+│ Next.js Frontend (Optional)                             │
+│ frontend/ — React UI for test generation                │
+└───────────────────────┬─────────────────────────────────┘
+                        │ HTTP REST API
+┌───────────────────────▼─────────────────────────────────┐
+│ FastAPI Backend                                          │
+│ backend/app/                                             │
+│ ├── main.py — API server                                │
+│ ├── services/                                            │
+│ │   ├── test_generator.py — AI test generation          │
+│ │   ├── enrichment_service.py — Description enhancement │
+│ │   ├── navigation_service.py — Screen detection        │
+│ │   └── rag_service.py — Vector store queries           │
+│ └── api/routes/tests.py — Test generation endpoints     │
+└───────────────────────┬─────────────────────────────────┘
+                        │ Semantic search
+┌───────────────────────▼─────────────────────────────────┐
+│ RAG Module                                               │
+│ rag/                                                     │
+│ ├── chunker.py — Swift code → semantic chunks           │
+│ ├── auditor.py — Accessibility analysis                 │
+│ ├── store.py — Chroma vector store management           │
+│ └── cli.py — Indexing commands                          │
+│                                                          │
+│ Chroma vector store (./rag_store/)                      │
+│ Embeddings: sentence-transformers/all-MiniLM-L6-v2      │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🐳 Docker Deployment
+
+```bash
+# Start all services
+docker-compose up -d
+
+# Backend: http://localhost:8000
+# Frontend: http://localhost:3000
+```
+
+**First time setup:**
+```bash
+# Index your app inside the container
+docker-compose exec backend python -m rag.cli ingest \
+  --app-dir /app/ios-app \
+  --persist /app/rag_store
+```
+
+---
+
+## 📚 Documentation
+
+- **[Setup Guide](DEPLOYMENT.md)** — Detailed installation
+- **[Settings Guide](SETTINGS-GUIDE.md)** — Configuration options
+- **[Test Execution](TEST-EXECUTION-GUIDE.md)** — Running generated tests
+- **[Contributing](CONTRIBUTING.md)** — How to contribute
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## 🔗 Links
+
+- **Repository:** https://github.com/mheryerznkanyan/testara
+- **Issues:** https://github.com/mheryerznkanyan/testara/issues
+- **Website:** https://testara.dev _(coming soon)_
+
+---
+
+## 💡 Built With
+
+- **[LangChain](https://python.langchain.com/)** — AI orchestration
+- **[Claude (Anthropic)](https://www.anthropic.com/)** — Test generation
+- **[Chroma](https://www.trychroma.com/)** — Vector database
+- **[FastAPI](https://fastapi.tiangolo.com/)** — Backend API
+- **[Next.js](https://nextjs.org/)** — Frontend UI
+- **[Docker](https://www.docker.com/)** — Containerization
+
+---
+
+Made with ⚡ by [Mher Yerznkanyan](https://github.com/mheryerznkanyan)
