@@ -47,14 +47,11 @@ pip install -r backend/requirements.txt
 cp .env.example .env
 # Edit .env with your settings
 
-# 4. Index iOS app
+# 4. Index iOS app (auto-generates APP_CONTEXT.md)
 python3 -m rag.cli ingest \
   --app-dir /path/to/your/ios/app \
   --persist ./rag_store \
   --collection ios_app
-
-# 5. Generate app context
-python3 generate_app_context.py
 ```
 
 ### Running Services
@@ -102,7 +99,7 @@ docker-compose logs -f
 
 ### First-Time Setup
 
-**1. Index your iOS app inside container:**
+**Index your iOS app inside container:**
 
 ```bash
 docker-compose exec backend python -m rag.cli ingest \
@@ -111,11 +108,7 @@ docker-compose exec backend python -m rag.cli ingest \
   --collection ios_app
 ```
 
-**2. Generate app context:**
-
-```bash
-docker-compose exec backend python generate_app_context.py
-```
+*APP_CONTEXT.md is auto-generated during indexing*
 
 ### Configuration
 
@@ -299,10 +292,7 @@ python3 -m rag.cli ingest \
   --persist ./rag_store \
   --collection ios_app
 
-# Regenerate app context
-python3 generate_app_context.py
-
-# Restart backend
+# Restart backend (APP_CONTEXT.md auto-updated during indexing)
 docker-compose restart backend
 ```
 

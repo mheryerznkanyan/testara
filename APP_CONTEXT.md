@@ -1,13 +1,14 @@
 # App Context for Test Generation
 
-**⚡ AUTO-GENERATE THIS FILE:**
+**This file is auto-generated when you index your iOS app.**
 
 ```bash
-# Generate from your indexed codebase
-python3 generate_app_context.py
+docker-compose exec backend python -m rag.cli ingest \
+  --app-dir /app/ios-app \
+  --persist /app/rag_store
 ```
 
-This will analyze your RAG index and extract:
+The indexing process extracts:
 - Screen names
 - Navigation patterns  
 - Accessibility IDs
@@ -121,9 +122,11 @@ List important accessibility identifiers from your code:
 
 ## How to Keep This Updated
 
-1. **Auto-generate** after code changes:
+1. **Re-index after code changes** (auto-updates this file):
    ```bash
-   python3 generate_app_context.py
+   docker-compose exec backend python -m rag.cli ingest \
+     --app-dir /app/ios-app \
+     --persist /app/rag_store
    ```
 
 2. **Edit manually** to add:

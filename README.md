@@ -58,9 +58,9 @@ XCODE_SCHEME=YourApp
 docker-compose exec backend python -m rag.cli ingest \
   --app-dir /app/ios-app \
   --persist /app/rag_store
-
-docker-compose exec backend python generate_app_context.py
 ```
+
+*APP_CONTEXT.md will be auto-generated during indexing*
 
 ### 2. Generate Tests
 
