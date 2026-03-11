@@ -1,0 +1,6 @@
+# Ignore all video recordings
+*.mp4
+*.mov
+
+# But keep this directory in git
+!.gitignore

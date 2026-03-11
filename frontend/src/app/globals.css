@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 9%;
+    --muted: 0 0% 60%;
+    --muted-foreground: 0 0% 45%;
+    --border: 0 0% 90%;
+    --accent: 0 0% 96%;
+    --sidebar: 0 0% 98%;
+    --glass-bg: 0 0% 96%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --muted: 0 0% 40%;
+    --muted-foreground: 0 0% 60%;
+    --border: 0 0% 15%;
+    --accent: 0 0% 10%;
+    --sidebar: 0 0% 3%;
+    --glass-bg: 0 0% 5%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom animations */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Glass morphism */
+.glass {
+  @apply bg-glass-bg border border-border backdrop-blur-sm;
+}
+
+/* Code block styling */
+.code-block {
+  @apply bg-gray-900 rounded-lg p-6 font-mono text-sm;
+}
