@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
+from rag.ast_parser import extract_swiftui_elements
+
 # ---------------------------------------------------------------------------
 # Regex patterns
 # ---------------------------------------------------------------------------
@@ -273,6 +275,11 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
         a11y_ids = sorted(set(SWIFTUI_A11Y_ID_RE.findall(block)))
         buttons = sorted(set(SWIFTUI_BUTTON_RE.findall(block)))
         nav_hits = sum(1 for pat in NAV_PATTERNS if pat.search(block))
+
+        # Extract SwiftUI elements (Button, TextField, Text, Toggle, SecureField, Picker)
+        # via AST / regex for XCTest-ready query generation.
+        swiftui_elements = extract_swiftui_elements(view_name, block)
+
         meta = {
             "kind": "swiftui_view",
             "path": rel_path,
@@ -283,6 +290,9 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
             "buttons": meta_list_to_str(buttons[:50]),
             "button_count": len(buttons),
             "navigation_signals": nav_hits,
+            # elements serialised as JSON string for vector store compat
+            "elements": _safe_json(swiftui_elements),
+            "element_count": len(swiftui_elements),
         }
         chunks.append(Chunk(text=block, meta=meta))
 
@@ -294,6 +304,8 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
             "buttons": buttons[:50],
             "accessibility_ids": a11y_ids[:200],
             "has_navigation_signals": bool(nav_hits),
+            # Structured element list for downstream consumers
+            "elements": swiftui_elements,
         }
         chunks.append(Chunk(text=_safe_json(card), meta={**meta, "kind": "screen_card"}))
 
