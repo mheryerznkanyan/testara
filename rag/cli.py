@@ -21,6 +21,7 @@ from langchain_core.documents import Document
 
 from rag.chunker import build_chunks_for_file, Chunk
 from rag.auditor import audit_accessibility
+from rag.storyboard_parser import extract_storyboard_ids
 from rag.store import (
     build_vectorstore,
     upsert_documents,
@@ -32,6 +33,19 @@ from rag.store import (
 )
 
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+_STORYBOARD_SUFFIXES = {".storyboard", ".xib"}
+_EXCLUDE_DIRS = {"Pods", ".git", "build", "DerivedData", ".build", "vendor"}
+
+
+def _iter_storyboard_files(root: Path):
+    """Yield all .storyboard and .xib files under *root*, skipping noise dirs."""
+    import os
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS and not d.startswith(".")]
+        for f in files:
+            if Path(f).suffix.lower() in _STORYBOARD_SUFFIXES:
+                yield Path(dirpath) / f
 
 
 def _generate_app_context(persist_dir: str, collection: str, embed_model: str):
@@ -80,6 +94,44 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if not text.strip():
             continue
         all_chunks.extend(build_chunks_for_file(text, rel))
+
+    # ── Storyboard / XIB ingestion ──────────────────────────────────────────
+    storyboard_chunks: List[Chunk] = []
+    storyboard_files = list(_iter_storyboard_files(app_dir))
+    for sb_path in storyboard_files:
+        rel = normalize_path(sb_path, app_dir)
+        try:
+            vc_map = extract_storyboard_ids(str(sb_path))
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            print(f"WARNING: skipping {rel}: {exc}", file=sys.stderr)
+            continue
+
+        for vc_class, ids in vc_map.items():
+            if not ids:
+                continue
+            card = safe_json({
+                "type": "STORYBOARD_IDS",
+                "source": "storyboard",
+                "path": rel,
+                "viewController": vc_class,
+                "accessibility_ids": ids,
+            })
+            storyboard_chunks.append(Chunk(
+                text=card,
+                meta={
+                    "kind": "storyboard_ids",
+                    "path": rel,
+                    "screen": vc_class,
+                    "symbol": vc_class,
+                    "source": "storyboard",
+                    "confidence": "explicit",
+                    "accessibility_ids": "|".join(ids),
+                    "accessibility_id_count": len(ids),
+                },
+            ))
+
+    all_chunks.extend(storyboard_chunks)
+    # ────────────────────────────────────────────────────────────────────────
 
     findings, summary = audit_accessibility(all_chunks)
 
@@ -130,6 +182,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print(safe_json({
         "status": "ok",
         "indexed_swift_files": len(swift_files),
+        "indexed_storyboard_files": len(storyboard_files),
+        "storyboard_chunks": len(storyboard_chunks),
         "documents_upserted": len(docs),
         "persist_dir": args.persist,
         "collection": args.collection,
