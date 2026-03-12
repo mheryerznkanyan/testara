@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
+from rag import ast_parser
+
 from rag.ast_parser import extract_swiftui_elements
 
 # ---------------------------------------------------------------------------
@@ -93,44 +95,89 @@ UIVIEW_PROPERTY_RE = re.compile(
 
 def extract_uiview_properties(class_name: str, block: str) -> List[str]:
     """Extract UIView property names from a UIViewController class block.
-    
-    Returns inferred accessibility IDs in format: "ClassName.propertyName"
-    
-    This handles runtime swizzling where UIView properties get accessibility
-    identifiers automatically generated using Mirror reflection.
+
+    Delegates to :func:`rag.ast_parser.extract_uikit_properties_ast` for
+    accurate, AST-based extraction.  Returns inferred accessibility IDs in
+    the format ``"ClassName.propertyName"`` — identical to the previous
+    regex-based output so callers remain unchanged.
+
+    Falls back transparently to the legacy regex implementation when
+    tree-sitter is unavailable (e.g. in CI without the native binary).
+
+    Parameters
+    ----------
+    class_name:
+        Swift class name (e.g. ``"LoginViewController"``).
+    block:
+        The full source text of the class block (or the whole file — the
+        AST parser will filter by class name regardless).
+
+    Returns
+    -------
+    List[str]
+        Strings of the form ``"ClassName.propertyName"``.
     """
+    # --- AST path (preferred) -------------------------------------------
+    ast_ids = ast_parser.extract_uiview_property_ids(class_name, block)
+    if ast_ids:
+        return ast_ids
+
+    # --- Regex fallback (when tree-sitter is unavailable or found nothing) -
+    # This preserves behaviour during development / CI without the native lib.
     inferred_ids: List[str] = []
-    
+
     for match in UIVIEW_PROPERTY_RE.finditer(block):
         prop_name = match.group(2)
         type_annotation = match.group(3)  # May be None for inferred types
-        
+
         # Get the rest of the line to check for type inference
         line_start = match.start()
         line_end = block.find('\n', line_start)
         if line_end == -1:
             line_end = len(block)
         full_line = block[line_start:line_end]
-        
-        # Check if this is a UIView type
+
         is_uiview_type = False
-        
-        # Check explicit type annotation
+
+        # Explicit type annotation
         if type_annotation and type_annotation in UIVIEW_TYPES:
             is_uiview_type = True
-        
-        # Check for type in initialization (e.g., "= UIButton()")
+
+        # Inferred type from initialiser  (e.g. `= UIButton()`)
         if not is_uiview_type:
             for uiview_type in UIVIEW_TYPES:
                 if f"= {uiview_type}(" in full_line or f"= {uiview_type}{{" in full_line:
                     is_uiview_type = True
                     break
-        
+
         if is_uiview_type:
-            inferred_id = f"{class_name}.{prop_name}"
-            inferred_ids.append(inferred_id)
-    
+            inferred_ids.append(f"{class_name}.{prop_name}")
+
     return inferred_ids
+
+
+def extract_uiview_properties_detailed(class_name: str, block: str) -> List[Dict]:
+    """Return full property dicts (name, type, inferred_id, confidence, source).
+
+    Uses :func:`rag.ast_parser.extract_uikit_properties_ast` directly so
+    callers that want richer metadata (confidence, source, resolved type) can
+    access it without re-parsing.
+
+    Parameters
+    ----------
+    class_name:
+        Swift class name.
+    block:
+        Swift source text.
+
+    Returns
+    -------
+    List[Dict]
+        Each dict has keys: ``name``, ``type``, ``inferred_id``,
+        ``confidence``, ``source``.  Empty list when tree-sitter is
+        unavailable.
+    """
+    return ast_parser.extract_uikit_properties_ast(class_name, block)
 
 
 # ---------------------------------------------------------------------------
@@ -313,15 +360,23 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
     for cls_name, block in extract_blocks(
         file_text, UIKIT_VC_START_RE, name_group=3, kind="uikit_viewcontroller"
     ):
-        # Extract explicit accessibility IDs
+        # Extract explicit accessibility IDs set in source code
         explicit_ids = sorted(set(UIKIT_A11Y_ID_RE.findall(block)))
-        
-        # Extract inferred accessibility IDs from UIView properties (swizzling)
-        inferred_ids = extract_uiview_properties(cls_name, block)
-        
+
+        # Extract inferred accessibility IDs via AST (or regex fallback).
+        # `inferred_props` carries full metadata (name, type, confidence, source).
+        inferred_props = extract_uiview_properties_detailed(cls_name, block)
+        inferred_ids = [p["inferred_id"] for p in inferred_props]
+
+        # Derived metadata for inferred properties
+        # confidence is always "inferred"; source is "ast" or "regex" depending
+        # on which path produced the result.
+        inferred_sources = sorted({p.get("source", "regex") for p in inferred_props})
+        inferred_types_map = {p["inferred_id"]: p["type"] for p in inferred_props}
+
         # Combine explicit and inferred IDs
         all_ids = sorted(set(explicit_ids) | set(inferred_ids))
-        
+
         nav_hits = sum(1 for pat in NAV_PATTERNS if pat.search(block))
         meta = {
             "kind": "uikit_viewcontroller",
@@ -332,6 +387,10 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
             "accessibility_id_count": len(all_ids),
             "explicit_accessibility_ids": meta_list_to_str(explicit_ids),
             "inferred_accessibility_ids": meta_list_to_str(inferred_ids),
+            # Confidence tag: explicit IDs are "explicit"; inferred are "inferred"
+            "inferred_confidence": "inferred" if inferred_ids else "",
+            # Source tag: which parser produced the inferred IDs
+            "inferred_source": meta_list_to_str(inferred_sources),
             "navigation_signals": nav_hits,
         }
         chunks.append(Chunk(text=block, meta=meta))
@@ -343,7 +402,16 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
             "path": rel_path,
             "accessibility_ids": all_ids[:200],
             "explicit_accessibility_ids": explicit_ids[:200],
-            "inferred_accessibility_ids": inferred_ids[:200],
+            # Inferred IDs enriched with type and confidence info
+            "inferred_accessibility_ids": [
+                {
+                    "id": p["inferred_id"],
+                    "type": p.get("type", ""),
+                    "confidence": p.get("confidence", "inferred"),
+                    "source": p.get("source", "regex"),
+                }
+                for p in inferred_props[:200]
+            ],
             "has_navigation_signals": bool(nav_hits),
         }
         chunks.append(Chunk(text=_safe_json(card), meta={**meta, "kind": "screen_card"}))
@@ -354,10 +422,11 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
         set(SWIFTUI_A11Y_ID_RE.findall(file_text)) | set(UIKIT_A11Y_ID_RE.findall(file_text))
     )
     
-    # Collect inferred IDs from all UIKit ViewControllers in the file
+    # Collect inferred IDs from all UIKit ViewControllers in the file.
+    # Use the detailed extractor so we preserve confidence/source provenance.
     inferred_file_ids = []
     for cls_name, block in extract_blocks(file_text, UIKIT_VC_START_RE, name_group=3, kind=""):
-        inferred_file_ids.extend(extract_uiview_properties(cls_name, block))
+        inferred_file_ids.extend(ast_parser.extract_uiview_property_ids(cls_name, block))
     
     # Combine all IDs for the file
     all_file_ids = sorted(set(explicit_file_ids) | set(inferred_file_ids))

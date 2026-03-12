@@ -24,6 +24,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "rich>=13.0",
     "pbxproj>=4.0",
+    "tree-sitter>=0.23",
+    "tree-sitter-swift>=0.3",
 ]
 
 [tool.hatch.build.targets.wheel]
