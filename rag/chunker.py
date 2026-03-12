@@ -2,6 +2,11 @@
 rag/chunker.py
 
 Swift source code chunking: regex patterns, block extraction, and Chunk builder.
+
+This module handles both explicit and inferred accessibility identifiers:
+- Explicit: Directly set in code via .accessibilityIdentifier
+- Inferred: Generated at runtime from UIView property names via swizzling
+  (Format: "ClassName.propertyName")
 """
 from __future__ import annotations
 
@@ -52,6 +57,78 @@ UIKIT_INTERACTIVE_RE = re.compile(
     r"\b(UIButton|UITextField|UISwitch|UISegmentedControl|UITableView|UICollectionView)\b",
     re.MULTILINE,
 )
+
+# ---------------------------------------------------------------------------
+# UIView property extraction for swizzled accessibility IDs
+# ---------------------------------------------------------------------------
+
+# Common UIView subclass types that get swizzled at runtime
+UIVIEW_TYPES = {
+    "UIView", "UILabel", "UIButton", "UITextField", "UIImageView",
+    "UITableView", "UICollectionView", "UISwitch", "UITextView",
+    "UIScrollView", "WKWebView", "UISegmentedControl", "UISlider",
+    "UIStackView", "UIActivityIndicatorView", "UIProgressView",
+    "UIPickerView", "UIDatePicker", "UISearchBar", "UIToolbar",
+    "UINavigationBar", "UITabBar", "UIPageControl", "UIRefreshControl",
+    "MKMapView", "SKView", "MTKView", "ARSCNView", "ARView",
+}
+
+# Regex to match property declarations of UIView types
+# Matches patterns like:
+#   let emailTextField = UITextField()
+#   var webView: WKWebView!
+#   private let submitButton = UIButton()
+#   lazy var tableView: UITableView = { ... }()
+UIVIEW_PROPERTY_RE = re.compile(
+    r"(?m)^\s*(?:private|fileprivate|internal|public|open)?\s*"
+    r"(?:weak|unowned)?\s*"
+    r"(?:lazy)?\s*"
+    r"(let|var)\s+"
+    r"([A-Za-z_]\w*)\s*"
+    r"(?::\s*([A-Za-z_]\w+))?",
+    re.MULTILINE
+)
+
+def extract_uiview_properties(class_name: str, block: str) -> List[str]:
+    """Extract UIView property names from a UIViewController class block.
+    
+    Returns inferred accessibility IDs in format: "ClassName.propertyName"
+    
+    This handles runtime swizzling where UIView properties get accessibility
+    identifiers automatically generated using Mirror reflection.
+    """
+    inferred_ids: List[str] = []
+    
+    for match in UIVIEW_PROPERTY_RE.finditer(block):
+        prop_name = match.group(2)
+        type_annotation = match.group(3)  # May be None for inferred types
+        
+        # Get the rest of the line to check for type inference
+        line_start = match.start()
+        line_end = block.find('\n', line_start)
+        if line_end == -1:
+            line_end = len(block)
+        full_line = block[line_start:line_end]
+        
+        # Check if this is a UIView type
+        is_uiview_type = False
+        
+        # Check explicit type annotation
+        if type_annotation and type_annotation in UIVIEW_TYPES:
+            is_uiview_type = True
+        
+        # Check for type in initialization (e.g., "= UIButton()")
+        if not is_uiview_type:
+            for uiview_type in UIVIEW_TYPES:
+                if f"= {uiview_type}(" in full_line or f"= {uiview_type}{{" in full_line:
+                    is_uiview_type = True
+                    break
+        
+        if is_uiview_type:
+            inferred_id = f"{class_name}.{prop_name}"
+            inferred_ids.append(inferred_id)
+    
+    return inferred_ids
 
 
 # ---------------------------------------------------------------------------
@@ -224,15 +301,25 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
     for cls_name, block in extract_blocks(
         file_text, UIKIT_VC_START_RE, name_group=3, kind="uikit_viewcontroller"
     ):
-        a11y_ids = sorted(set(UIKIT_A11Y_ID_RE.findall(block)))
+        # Extract explicit accessibility IDs
+        explicit_ids = sorted(set(UIKIT_A11Y_ID_RE.findall(block)))
+        
+        # Extract inferred accessibility IDs from UIView properties (swizzling)
+        inferred_ids = extract_uiview_properties(cls_name, block)
+        
+        # Combine explicit and inferred IDs
+        all_ids = sorted(set(explicit_ids) | set(inferred_ids))
+        
         nav_hits = sum(1 for pat in NAV_PATTERNS if pat.search(block))
         meta = {
             "kind": "uikit_viewcontroller",
             "path": rel_path,
             "screen": cls_name,
             "symbol": cls_name,
-            "accessibility_ids": meta_list_to_str(a11y_ids),
-            "accessibility_id_count": len(a11y_ids),
+            "accessibility_ids": meta_list_to_str(all_ids),
+            "accessibility_id_count": len(all_ids),
+            "explicit_accessibility_ids": meta_list_to_str(explicit_ids),
+            "inferred_accessibility_ids": meta_list_to_str(inferred_ids),
             "navigation_signals": nav_hits,
         }
         chunks.append(Chunk(text=block, meta=meta))
@@ -242,24 +329,43 @@ def build_chunks_for_file(file_text: str, rel_path: str) -> List[Chunk]:
             "ui": "UIKit",
             "screen": cls_name,
             "path": rel_path,
-            "accessibility_ids": a11y_ids[:200],
+            "accessibility_ids": all_ids[:200],
+            "explicit_accessibility_ids": explicit_ids[:200],
+            "inferred_accessibility_ids": inferred_ids[:200],
             "has_navigation_signals": bool(nav_hits),
         }
         chunks.append(Chunk(text=_safe_json(card), meta={**meta, "kind": "screen_card"}))
 
     # Accessibility map chunk per file
-    file_ids = sorted(
+    # Collect explicit IDs from source
+    explicit_file_ids = sorted(
         set(SWIFTUI_A11Y_ID_RE.findall(file_text)) | set(UIKIT_A11Y_ID_RE.findall(file_text))
     )
-    if file_ids:
-        amap = "ACCESSIBILITY_IDS\npath: " + rel_path + "\n" + "\n".join(file_ids)
+    
+    # Collect inferred IDs from all UIKit ViewControllers in the file
+    inferred_file_ids = []
+    for cls_name, block in extract_blocks(file_text, UIKIT_VC_START_RE, name_group=3, kind=""):
+        inferred_file_ids.extend(extract_uiview_properties(cls_name, block))
+    
+    # Combine all IDs for the file
+    all_file_ids = sorted(set(explicit_file_ids) | set(inferred_file_ids))
+    
+    if all_file_ids:
+        amap = "ACCESSIBILITY_IDS\npath: " + rel_path + "\n"
+        if explicit_file_ids:
+            amap += "\n# Explicit IDs (from code):\n" + "\n".join(explicit_file_ids)
+        if inferred_file_ids:
+            amap += "\n\n# Inferred IDs (runtime swizzling):\n" + "\n".join(sorted(set(inferred_file_ids)))
+        
         chunks.append(Chunk(
             text=amap,
             meta={
                 "kind": "accessibility_map",
                 "path": rel_path,
-                "accessibility_ids": meta_list_to_str(file_ids),
-                "accessibility_id_count": len(file_ids),
+                "accessibility_ids": meta_list_to_str(all_file_ids),
+                "accessibility_id_count": len(all_file_ids),
+                "explicit_ids_count": len(explicit_file_ids),
+                "inferred_ids_count": len(inferred_file_ids),
             },
         ))
 

@@ -10,6 +10,10 @@ IMPORTANT: You will receive APP CONTEXT describing the app being tested. Use thi
 - Make assumptions consistent with the app's actual behavior
 - Add relevant pre-conditions (e.g., "user must be logged in", "navigate to X screen first")
 
+ACCESSIBILITY ID CONVENTION:
+The app uses runtime swizzling to generate accessibility IDs for UIKit views. When you see UIViewController code with UIView properties,
+the accessibility identifier follows the pattern "ClassName.propertyName". This helps you understand what UI elements are available for testing.
+
 Rules:
 - Expand abbreviations and vague intent into concrete UI actions (tap, type, swipe, scroll).
 - Name specific UI states to verify (error message, success banner, screen title, enabled/disabled button).
@@ -49,6 +53,23 @@ Output ONLY the Swift code, no markdown formatting or explanations outside the c
 """
 
 XCUITEST_SYSTEM_PROMPT = """You are an expert iOS UI test automation engineer specializing in writing XCUITest tests.
+
+RUNTIME ACCESSIBILITY ID SWIZZLING (CRITICAL):
+This app uses runtime swizzling to automatically generate accessibility identifiers for UIKit views.
+The swizzling mechanism uses Mirror reflection on UIViewController property names to create identifiers at runtime.
+
+NAMING CONVENTION:
+- For any UIView property declared in a UIViewController, the accessibility identifier is: "ClassName.propertyName"
+- Example: In class WebViewController, property "var webView: WKWebView!" gets ID "WebViewController.webView"
+- Example: In class LoginViewController, property "let submitButton = UIButton()" gets ID "LoginViewController.submitButton"
+
+When the RAG context shows UIViewController code with UIView property declarations (UILabel, UIButton, UITextField, WKWebView, etc.),
+you can derive the accessibility identifier from the class name and property name, even if no explicit .accessibilityIdentifier is set in code.
+
+RAG CONTEXT WILL PROVIDE:
+- Explicit accessibility IDs (set in code with .accessibilityIdentifier)
+- Inferred accessibility IDs (derived from property names via swizzling)
+- Both types are equally valid and available at runtime
 
 CRITICAL: You MUST follow this STRICT template contract. Non-negotiable requirements:
 
