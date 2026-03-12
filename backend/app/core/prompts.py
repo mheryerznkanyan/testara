@@ -14,6 +14,14 @@ ACCESSIBILITY ID CONVENTION:
 The app uses runtime swizzling to generate accessibility IDs for UIKit views. When you see UIViewController code with UIView properties,
 the accessibility identifier follows the pattern "ClassName.propertyName". This helps you understand what UI elements are available for testing.
 
+ACCESSIBILITY ID CONFIDENCE LEVELS:
+When referencing UI elements, be aware that accessibility IDs have different confidence levels:
+- EXPLICIT IDs (highest confidence): Directly set in code via .accessibilityIdentifier("...") or .accessibilityLabel("..."). These are guaranteed to be present at runtime.
+- INFERRED IDs (medium confidence): Derived from UIViewController property names via runtime swizzling (pattern: "ClassName.propertyName"). These are reliable but depend on the swizzling mechanism being active.
+- HEURISTIC IDs (lower confidence): Guessed from element labels, titles, or visible text. Use only when explicit or inferred IDs are unavailable.
+
+When describing UI interactions, prefer referencing elements that have explicit IDs when the context provides them. For elements where only labels/titles are known, describe interactions in terms of visible text rather than asserting specific identifiers.
+
 Rules:
 - Expand abbreviations and vague intent into concrete UI actions (tap, type, swipe, scroll).
 - Name specific UI states to verify (error message, success banner, screen title, enabled/disabled button).
@@ -70,6 +78,44 @@ RAG CONTEXT WILL PROVIDE:
 - Explicit accessibility IDs (set in code with .accessibilityIdentifier)
 - Inferred accessibility IDs (derived from property names via swizzling)
 - Both types are equally valid and available at runtime
+
+ACCESSIBILITY ID CONFIDENCE LEVELS (CRITICAL):
+Not all accessibility IDs carry the same reliability. Understand the hierarchy before writing queries:
+
+1. EXPLICIT IDs (highest confidence) — set directly in source code:
+   - e.g. view.accessibilityIdentifier = "loginButton" or .accessibilityIdentifier("submitField")
+   - Guaranteed present at runtime regardless of view structure or swizzling state.
+   - ALWAYS prefer these when the RAG context provides them.
+
+2. INFERRED IDs (medium confidence) — derived via runtime swizzling from property names:
+   - e.g. In class LoginViewController, property "var submitButton: UIButton!" → ID "LoginViewController.submitButton"
+   - Reliable when swizzling is active, but depend on property name matching and Mirror reflection.
+   - Use these when explicit IDs are unavailable.
+
+3. HEURISTIC IDs (lower confidence) — derived from visible labels, titles, or text content:
+   - e.g. querying app.buttons["Log In"] because the button displays "Log In"
+   - Fragile: label changes or localisation will break the query.
+   - Use only as a last resort when neither explicit nor inferred IDs are available.
+
+QUERY PREFERENCE RULE: When multiple query options are available for the same element, always choose the highest-confidence option:
+```swift
+// PREFERRED (explicit ID from RAG context)
+let loginBtn = app.buttons["LoginViewController.submitButton"]
+
+// ACCEPTABLE (inferred via swizzling, when explicit not available)
+let loginBtn = app.buttons["LoginViewController.loginButton"]
+
+// LAST RESORT (heuristic, label-based — only if no ID exists in RAG context)
+let loginBtn = app.buttons["Log In"]
+```
+
+FALLBACK QUERY STRATEGY (when RAG context does not provide an ID):
+If the RAG context does not include an accessibility identifier for a UI element, fall back in this order:
+1. Check if the element can be reached via a known parent container with an explicit ID.
+2. Query by accessibility label (visible text): app.buttons["Button Label Text"]
+3. Query by element type + index: app.buttons.element(boundBy: 0) (use with caution, index-sensitive)
+4. Query by navigation bar title: app.navigationBars["Screen Title"]
+Always add a descriptive XCTAssertTrue failure message explaining which fallback strategy was used.
 
 CRITICAL: You MUST follow this STRICT template contract. Non-negotiable requirements:
 
