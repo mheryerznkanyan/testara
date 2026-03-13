@@ -85,17 +85,27 @@ class TestRunner:
             
             # 3. Boot simulator
             await self._boot_simulator(device_id)
-            
-            # 4. Start video recording
-            recording_process = await self._start_recording(device_id, video_path)
-            
-            # 5. Run the test
+
+            # 4. Ensure Simulator app is open (required for video recording)
+            await self._bring_simulator_to_front(device_id)
+            # Extra wait for Simulator GUI to fully connect
+            await asyncio.sleep(3)
+
+            # 5. Start video recording (non-fatal if it fails)
+            recording_process = None
+            try:
+                recording_process = await self._start_recording(device_id, video_path)
+            except Exception as e:
+                logger.warning(f"Video recording failed to start (continuing without): {e}")
+
+            # 6. Run the test
             test_result = await self._execute_test(test_file_path, device_id, app_name)
-            
-            # 6. Stop recording
-            await self._stop_recording(recording_process)
-            
-            # 7. Verify video file exists and has content
+
+            # 7. Stop recording
+            if recording_process:
+                await self._stop_recording(recording_process)
+
+            # 8. Verify video file exists and has content
             video_ready = False
             if video_path.exists():
                 file_size = video_path.stat().st_size
@@ -103,11 +113,11 @@ class TestRunner:
                     logger.info(f"Video file created successfully: {file_size} bytes")
                     video_ready = True
                 else:
-                    logger.error(f"Video file exists but is empty: {video_path}")
+                    logger.warning(f"Video file exists but is empty: {video_path}")
             else:
-                logger.error(f"Video file not found: {video_path}")
+                logger.info("No video file (recording was skipped or failed)")
             
-            # 8. Clean up temp file
+            # 9. Clean up temp file
             os.unlink(test_file_path)
             
             return {
