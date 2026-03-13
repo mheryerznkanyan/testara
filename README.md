@@ -1,6 +1,8 @@
-# Testara
+# [Testara](https://testara.dev)
 
 **AI-powered iOS test automation** — Write tests in plain English, get working XCTest code.
+
+**Website:** [testara.dev](https://testara.dev)
 
 ---
 
@@ -145,6 +147,14 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE)
+
+---
+
+## 🔗 Links
+
+- **Website:** [testara.dev](https://testara.dev)
+- **GitHub:** [github.com/mheryerznkanyan/testara](https://github.com/mheryerznkanyan/testara)
+- **Issues:** [Report a bug](https://github.com/mheryerznkanyan/testara/issues)
 
 ---
 
