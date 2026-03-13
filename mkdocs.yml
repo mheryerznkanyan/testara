@@ -1,0 +1,99 @@
+site_name: Testara Documentation
+site_url: https://docs.testara.dev
+site_description: AI-powered iOS test automation - Generate and run XCUITest code from plain English
+site_author: Mher Yerznkanyan
+repo_url: https://github.com/mheryerznkanyan/testara
+repo_name: mheryerznkanyan/testara
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    # Light mode
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/test-tube
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/quickstart.md
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+  - Usage:
+    - Generating Tests: usage/generating-tests.md
+    - Running Tests: usage/running-tests.md
+    - RAG Indexing: usage/rag-indexing.md
+  - How It Works:
+    - Architecture: architecture/overview.md
+    - RAG Pipeline: architecture/rag.md
+    - Test Generation: architecture/generation.md
+  - Advanced:
+    - Docker Deployment: advanced/docker.md
+    - CI/CD Integration: advanced/ci-cd.md
+    - Customization: advanced/customization.md
+  - API Reference:
+    - REST API: api/rest.md
+    - Python API: api/python.md
+  - Contributing:
+    - Guide: contributing/guide.md
+    - Development Setup: contributing/development.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mheryerznkanyan/testara
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/mheryerz
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
