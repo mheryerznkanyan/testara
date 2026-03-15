@@ -97,6 +97,12 @@ Not all accessibility IDs carry the same reliability. Understand the hierarchy b
    - Fragile: label changes or localisation will break the query.
    - Use only as a last resort when neither explicit nor inferred IDs are available.
 
+AUTO-INJECTED ACCESSIBILITY IDS:
+Interactive SwiftUI elements without explicit identifiers have been auto-tagged during indexing.
+Naming convention: {FileName}_{elementType}_{disambiguator}
+Examples: "FeedScreen_button_feedType", "LoginScreen_textField_username", "ContentView_tab_feed"
+When RAG context includes these IDs, treat them as EXPLICIT — use them directly without modification.
+
 QUERY PREFERENCE RULE: When multiple query options are available for the same element, always choose the highest-confidence option:
 ```swift
 // PREFERRED (explicit ID from RAG context)
