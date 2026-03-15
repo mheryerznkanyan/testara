@@ -41,9 +41,11 @@ type ResultTab = 'code' | 'quality' | 'enrichment'
 /* ─────────────────────────── helpers ───────────────────────── */
 
 const EXAMPLES = [
-  'Test login with valid credentials navigates to home screen',
-  'Verify signup form validation shows errors for invalid email',
-  'Test settings screen toggle switches persist after app restart',
+  'Open the app and verify the main screen loads correctly',
+  'Navigate through all tabs and check each one displays content',
+  'Tap on the first item in the list and verify the detail screen opens',
+  'Test pull to refresh on the main screen',
+  'Open settings and toggle a switch, then verify it stays on',
 ]
 
 const Spinner = () => (

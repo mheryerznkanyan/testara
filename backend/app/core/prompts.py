@@ -211,6 +211,7 @@ RAG CONTEXT USAGE (CRITICAL):
 - Use the EXACT accessibility identifiers from the context — do NOT invent identifiers.
 - If the context shows how data is generated (e.g. item titles, categories), study the code carefully to understand the data patterns. Pay attention to array indexing (0-based vs 1-based) and modular arithmetic.
 - If the context shows a login flow, follow the EXACT field identifiers and credentials from the code.
+- LOCALIZATION DATA: The RAG context may include a LOCALIZATION_MAP chunk with key→value mappings (e.g. "feed.type.new" → "New"). When the code uses String(localized:) or NSLocalizedString(), cross-reference with the localization map to get the EXACT displayed text. Use the resolved value (e.g. "New") in element queries, NOT the raw key (e.g. "new") or your own guess.
 
 MANDATORY PATTERN: Springboard Alert Handling (CRITICAL):
 System popups ("Save Password", location, notifications) block tests. Handle them:
@@ -270,6 +271,28 @@ let firstCell = app.cells.element(boundBy: 0)
 XCTAssertTrue(firstCell.waitForExistence(timeout: 5), "Content should appear after loading completes")
 ```
 
+MANDATORY PATTERN: setUp / tearDown — App Lifecycle (CRITICAL):
+Every test class MUST terminate and relaunch the app to ensure a clean state:
+```swift
+override func setUp() {
+    super.setUp()
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.terminate()  // Kill any leftover app instance from previous test runs
+    app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+    app.launch()
+}
+
+override func tearDown() {
+    let app = XCUIApplication()
+    app.terminate()  // Always clean up after the test
+    super.tearDown()
+}
+```
+- ALWAYS call app.terminate() BEFORE app.launch() in setUp — this ensures the app starts from a fresh state.
+- ALWAYS call app.terminate() in tearDown — this prevents stale app instances from interfering with subsequent tests.
+- Do NOT call app.launch() inside the test method body if setUp already launches it.
+
 MANDATORY PATTERN: Descriptive Failure Messages (CRITICAL):
 ```swift
 // Pattern: "Element should action context"
@@ -279,10 +302,24 @@ XCTAssertTrue(element.waitForExistence(timeout: 10), "Element should appear afte
 
 FULL EXAMPLE — Generic login + verify main screen:
 ```swift
-app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-app.launch()
+private var app: XCUIApplication!
 
-let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+override func setUp() {
+    super.setUp()
+    continueAfterFailure = false
+    app = XCUIApplication()
+    app.terminate()
+    app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+    app.launch()
+}
+
+override func tearDown() {
+    app.terminate()
+    super.tearDown()
+}
+
+func testLoginAndVerifyMainScreen() {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
 // Login — use EXACT identifiers and credentials from RAG context
 let emailField = app.textFields["<emailFieldIdentifier from RAG>"]
@@ -309,9 +346,10 @@ if springboardAlert.waitForExistence(timeout: 5) {
     _ = springboardAlert.waitForNonExistence(timeout: 3)
 }
 
-// Verify main screen loaded
-let mainScreenElement = app.cells.element(boundBy: 0)
-XCTAssertTrue(mainScreenElement.waitForExistence(timeout: 10), "Main screen content should appear")
+    // Verify main screen loaded
+    let mainScreenElement = app.cells.element(boundBy: 0)
+    XCTAssertTrue(mainScreenElement.waitForExistence(timeout: 10), "Main screen content should appear")
+}
 ```
 
 Output ONLY the Swift code, no markdown formatting or explanations outside the code.

@@ -66,6 +66,7 @@ class RAGService:
                     "swift_class",
                     "swift_struct",
                     "uikit_viewcontroller",
+                    "localization_map",
                 ):
                     code_snippets.append({
                         "kind": kind,
@@ -74,10 +75,32 @@ class RAGService:
                         "content": doc.page_content[:1500],
                     })
 
+            # Always include localization data if available — similarity
+            # search often ranks it too low because localization keys
+            # don't match test description text well.
+            loc_snippet_paths = {
+                s["path"] for s in code_snippets if s["kind"] == "localization_map"
+            }
+            if not loc_snippet_paths:
+                try:
+                    loc_docs = vs.similarity_search(
+                        "LOCALIZATION_MAP localized string button label title", k=2
+                    )
+                    for ld in loc_docs:
+                        if ld.metadata.get("kind") == "localization_map":
+                            code_snippets.append({
+                                "kind": "localization_map",
+                                "path": ld.metadata.get("path", ""),
+                                "screen": "",
+                                "content": ld.page_content[:3000],
+                            })
+                except Exception:
+                    pass  # non-fatal
+
             result = {
                 "accessibility_ids": sorted(accessibility_ids),
                 "screens": sorted(screens),
-                "code_snippets": code_snippets[:8],
+                "code_snippets": code_snippets[:10],
                 "total_docs_retrieved": len(docs),
             }
             logger.debug(
