@@ -21,6 +21,7 @@ from langchain_core.documents import Document
 
 from rag.chunker import build_chunks_for_file, Chunk
 from rag.auditor import audit_accessibility
+from rag.accessibility_injector import inject_accessibility_ids
 from rag.storyboard_parser import extract_storyboard_ids
 from rag.store import (
     build_vectorstore,
@@ -93,6 +94,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         text = read_text(p)
         if not text.strip():
             continue
+        text = inject_accessibility_ids(text, Path(rel).stem)
         all_chunks.extend(build_chunks_for_file(text, rel))
 
     # ── Storyboard / XIB ingestion ──────────────────────────────────────────

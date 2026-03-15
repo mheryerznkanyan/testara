@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 
+from rag.accessibility_injector import inject_directory, restore_files
+
 logger = logging.getLogger(__name__)
 
 
@@ -410,6 +412,15 @@ class TestRunner:
         dest_file.write_text(test_code)
         logger.info(f"Test file written: {dest_file.stat().st_size} bytes")
 
+        # Inject accessibility IDs into app source before building
+        app_source_root = project_path.parent
+        logger.info(f"Injecting accessibility IDs into {app_source_root}")
+        backup = inject_directory(
+            app_source_root,
+            exclude_dirs={"Pods", ".build", "DerivedData", ".git"},
+        )
+        logger.info(f"Accessibility injection complete: {len(backup)} files backed up")
+
         try:
             # Step 1: Build for testing (incremental)
             logger.info("Building project for testing...")
@@ -486,6 +497,10 @@ class TestRunner:
                 "logs": str(e),
                 "duration": time.time() - start_time,
             }
+        finally:
+            # Always restore original source files regardless of build/test outcome
+            logger.info("Restoring original source files after accessibility injection")
+            restore_files(backup)
 
     @staticmethod
     def _extract_test_method(test_code: str) -> Optional[str]:
