@@ -81,9 +81,32 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         include_comments=body.include_comments,
     )
 
+    # Appium discovery (optional)
+    accessibility_snapshot = None
+    if body.discovery_enabled and body.bundle_id and body.device_udid:
+        appium_service = getattr(request.app.state, "appium_service", None)
+        if appium_service:
+            try:
+                accessibility_snapshot = await appium_service.discover(
+                    bundle_id=body.bundle_id,
+                    device_udid=body.device_udid,
+                )
+                logger.info(
+                    "Appium discovery complete: %d interactive elements",
+                    len(accessibility_snapshot.interactive_elements()),
+                )
+            except Exception as e:
+                logger.warning("Appium discovery failed (continuing without): %s", e)
+        else:
+            logger.warning(
+                "discovery_enabled=True but Appium service not initialized (APPIUM_ENABLED=false)"
+            )
+
     generator = request.app.state.test_generator
     try:
-        response = await asyncio.to_thread(generator.run, gen_request)
+        response = await asyncio.to_thread(
+            generator.run, gen_request, accessibility_snapshot
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except HTTPException:

@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     xcode_scheme: str = ""
     xcode_ui_test_target: str = ""
 
+    # Appium discovery settings
+    appium_enabled: bool = False
+    appium_server_url: str = "http://localhost:4723"
+    appium_startup_timeout: int = 30
+    appium_discovery_timeout: int = 60
+
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
 

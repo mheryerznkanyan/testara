@@ -12,7 +12,7 @@ from app.services.enrichment_service import EnrichmentService
 from app.services.test_generator import TestGenerator
 from app.services.rag_service import RAGService
 from app.services.test_runner import TestRunner
-from app.api.routes import health, tests, execution, simulators
+from app.api.routes import health, tests, execution, simulators, discovery
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +54,21 @@ async def lifespan(app: FastAPI):
         xcode_ui_test_target=settings.xcode_ui_test_target,
     )
     
+    # Appium discovery service (optional)
+    from app.services.appium_discovery_service import AppiumDiscoveryService
+
+    if settings.appium_enabled:
+        app.state.appium_service = AppiumDiscoveryService(
+            server_url=settings.appium_server_url,
+            startup_timeout=settings.appium_startup_timeout,
+        )
+        logger.info(
+            "Appium discovery service initialized (server: %s)", settings.appium_server_url
+        )
+    else:
+        app.state.appium_service = None
+        logger.info("Appium discovery disabled (set APPIUM_ENABLED=true to enable)")
+
     logger.info("Services initialised. Auth enabled: %s", bool(settings.api_key))
     yield
     # teardown (nothing needed for now)
@@ -102,6 +117,7 @@ app.include_router(health.router)
 app.include_router(tests.router)
 app.include_router(execution.router)
 app.include_router(simulators.router)
+app.include_router(discovery.router)
 
 # Mount static files for video recordings
 from pathlib import Path
