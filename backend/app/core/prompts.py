@@ -1,5 +1,19 @@
 """System prompts for test generation and description enrichment"""
 
+RUNTIME_TREE_INSTRUCTIONS = """
+RUNTIME ACCESSIBILITY IDS (CRITICAL — HIGHEST PRIORITY):
+The following accessibility tree was captured LIVE from the running app via WebDriverAgent.
+These are GUARANTEED to be correct — fully resolved identifiers and labels.
+
+Priority order for element queries:
+1. Use 'name' from runtime tree: app.buttons["loginButton"]     ← ALWAYS FIRST CHOICE
+2. Use 'label' from runtime tree: app.buttons["Sign In"]        ← FALLBACK if name empty
+3. Use RAG-derived IDs                                          ← FALLBACK if not in tree
+4. Use visible text heuristics                                  ← LAST RESORT
+
+The runtime tree IS the ground truth. Do not invent identifiers not in the tree.
+"""
+
 ENRICHMENT_SYSTEM_PROMPT = """You are an expert iOS QA engineer. Your job is to take a vague or brief test description \
 and rewrite it into a precise, actionable test specification that a test generator can use.
 
@@ -81,6 +95,9 @@ RAG CONTEXT WILL PROVIDE:
 
 ACCESSIBILITY ID CONFIDENCE LEVELS (CRITICAL):
 Not all accessibility IDs carry the same reliability. Understand the hierarchy before writing queries:
+
+NOTE: If the user message contains a RUNTIME ACCESSIBILITY TREE section, it supersedes ALL other
+sources below. Use names and labels from that tree before consulting RAG context or heuristics.
 
 1. EXPLICIT IDs (highest confidence) — set directly in source code:
    - e.g. view.accessibilityIdentifier = "loginButton" or .accessibilityIdentifier("submitField")

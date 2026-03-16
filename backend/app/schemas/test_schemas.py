@@ -40,3 +40,6 @@ class RAGTestGenerationRequest(BaseModel):
         None,
         description="iOS app name injected into the test context. Falls back to DEFAULT_APP_NAME in config.",
     )
+    discovery_enabled: bool = Field(False, description="Use live Appium accessibility discovery before generation")
+    bundle_id: Optional[str] = Field(None, description="App bundle ID for Appium discovery e.g. com.example.MyApp")
+    device_udid: Optional[str] = Field(None, description="Simulator UDID for Appium discovery (auto-detected if omitted)")
