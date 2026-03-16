@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import List
@@ -84,6 +85,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         return 2
 
     all_chunks: List[Chunk] = []
+    all_injected_ids: list[dict] = []
     swift_files = list(iter_swift_files(app_dir))
     if not swift_files:
         print("ERROR: no .swift files found under app-dir", file=sys.stderr)
@@ -94,7 +96,11 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         text = read_text(p)
         if not text.strip():
             continue
-        text = inject_accessibility_ids(text, Path(rel).stem)
+        text = inject_accessibility_ids(
+            text, Path(rel).stem,
+            force=getattr(args, 'force', False),
+            collected_ids=all_injected_ids,
+        )
         all_chunks.extend(build_chunks_for_file(text, rel))
 
     # ── Storyboard / XIB ingestion ──────────────────────────────────────────
@@ -171,6 +177,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     upsert_documents(vs, docs)
 
+    # Save injected accessibility IDs to JSON for debugging
+    ids_path = Path(args.persist) / "injected_accessibility_ids.json"
+    ids_path.parent.mkdir(parents=True, exist_ok=True)
+    ids_path.write_text(json.dumps(all_injected_ids, indent=2))
+    print(f"📋 Saved {len(all_injected_ids)} injected accessibility IDs → {ids_path}")
+
     # Auto-generate APP_CONTEXT.md after successful indexing
     if args.auto_context:
         try:
@@ -232,6 +244,11 @@ def main() -> int:
     p_ingest.add_argument("--collection", default="ios_app", help="Chroma collection name")
     p_ingest.add_argument(
         "--embed-model", default=DEFAULT_EMBED_MODEL, help="Embedding model name"
+    )
+    p_ingest.add_argument(
+        "--force",
+        action="store_true",
+        help="Strip old auto-injected accessibility IDs and re-inject with latest logic",
     )
     p_ingest.add_argument(
         "--fail-if-missing-ids",

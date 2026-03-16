@@ -30,6 +30,10 @@ EXCLUDE_DIRS = {
     ".xcworkspace",
 }
 
+# Directories containing test files — excluded to prevent generated/test code
+# from polluting similarity search results and outranking actual app source.
+_TEST_DIR_SUFFIXES = ("Tests", "UITests", "UnitTests", "SnapshotTests")
+
 SWIFT_SUFFIX = ".swift"
 
 
@@ -57,7 +61,12 @@ def normalize_path(p: Path, root: Path) -> str:
 
 def iter_swift_files(root: Path) -> Iterable[Path]:
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        dirs[:] = [
+            d for d in dirs
+            if d not in EXCLUDE_DIRS
+            and not d.startswith(".")
+            and not d.endswith(_TEST_DIR_SUFFIXES)
+        ]
         for f in files:
             if f.endswith(SWIFT_SUFFIX):
                 yield Path(dirpath) / f

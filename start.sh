@@ -3,6 +3,14 @@ set -e
 
 cd "$(dirname "$0")"
 
+# Parse flags
+FORCE_REINDEX=false
+for arg in "$@"; do
+    case $arg in
+        --reindex) FORCE_REINDEX=true ;;
+    esac
+done
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -102,6 +110,41 @@ if [ ! -f .testara_setup_done ]; then
         echo -e "${GREEN}✓${NC} Xcode setup complete"
     else
         echo -e "${YELLOW}⚠${NC}  Xcode setup needs manual steps (see above)"
+    fi
+fi
+
+# Index project with auto-injected accessibility IDs
+# Runs on first start, or when --reindex flag is passed
+if [ "$FORCE_REINDEX" = true ]; then
+    rm -f .testara_rag_done
+    echo -e "\n${YELLOW}⚠${NC}  --reindex: forcing re-indexing with latest accessibility ID logic"
+fi
+
+if [ ! -f .testara_rag_done ]; then
+    echo -e "\n${CYAN}${BOLD}Indexing Project (RAG + Accessibility IDs)${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    if [ -z "$PROJECT_ROOT" ]; then
+        echo -e "${RED}✗${NC} PROJECT_ROOT not set in .env — skipping RAG indexing"
+    elif [ ! -d "$PROJECT_ROOT" ]; then
+        echo -e "${RED}✗${NC} PROJECT_ROOT does not exist: $PROJECT_ROOT — skipping RAG indexing"
+    else
+        INGEST_FLAGS=""
+        if [ "$FORCE_REINDEX" = true ]; then
+            INGEST_FLAGS="--force"
+        fi
+        echo -e "${BLUE}►${NC} Ingesting Swift files from ${PROJECT_ROOT}..."
+        $PYTHON -m rag.cli ingest \
+            --app-dir "$PROJECT_ROOT" \
+            --persist "${RAG_PERSIST_DIR:-./rag_store}" \
+            --collection "${RAG_COLLECTION:-ios_app}" \
+            --embed-model "${RAG_EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}" \
+            $INGEST_FLAGS
+        if [ $? -eq 0 ]; then
+            touch .testara_rag_done
+            echo -e "${GREEN}✓${NC} RAG indexing complete (accessibility IDs auto-injected)"
+        else
+            echo -e "${YELLOW}⚠${NC}  RAG indexing failed — will retry on next start"
+        fi
     fi
 fi
 

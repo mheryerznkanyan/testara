@@ -73,6 +73,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Resolve relative RAG_PERSIST_DIR against the project root (not the CWD,
+# which may differ when the backend is started from backend/).
+_project_root = Path(__file__).resolve().parents[3]
+if not Path(settings.rag_persist_dir).is_absolute():
+    settings.rag_persist_dir = str(_project_root / settings.rag_persist_dir)
+
 # Auto-detect Xcode settings from PROJECT_ROOT when not explicitly set
 if not settings.xcode_project:
     settings.xcode_project = _find_xcodeproj(settings.project_root)

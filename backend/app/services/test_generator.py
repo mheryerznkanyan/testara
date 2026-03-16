@@ -17,6 +17,7 @@ from app.utils.swift_utils import extract_class_name, strip_code_fences
 from app.utils.validators import (
     build_class_name_section,
     build_context_section,
+    sanitize_xcuitest_code,
     validate_xcuitest_contract,
 )
 
@@ -90,6 +91,10 @@ class TestGenerator:
         logger.info("Invoking LLM for %s test: %r", test_type, request.test_description[:80])
         ai_msg = self._invoke_llm(messages)
         swift_code = strip_code_fences(ai_msg.content)
+
+        # Sanitize: remove forbidden patterns (otherElements, sleep, etc.)
+        if test_type == "ui":
+            swift_code = sanitize_xcuitest_code(swift_code)
 
         final_class_name = extract_class_name(swift_code, request.class_name or default_class_name)
 

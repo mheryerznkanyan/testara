@@ -10,9 +10,10 @@ IMPORTANT: You will receive APP CONTEXT describing the app being tested. Use thi
 - Make assumptions consistent with the app's actual behavior
 - Add relevant pre-conditions (e.g., "user must be logged in", "navigate to X screen first")
 
-ACCESSIBILITY ID CONVENTION:
-The app uses runtime swizzling to generate accessibility IDs for UIKit views. When you see UIViewController code with UIView properties,
-the accessibility identifier follows the pattern "ClassName.propertyName". This helps you understand what UI elements are available for testing.
+ACCESSIBILITY ID CONVENTIONS:
+- UIKit views: Runtime swizzling generates IDs in the pattern "ClassName.propertyName" (e.g., "LoginViewController.submitButton").
+- SwiftUI views: Auto-injected IDs follow the pattern "{StructName}_{elementType}_{disambiguator}" (e.g., "ContentView_tab_settings", "LoginView_button_signIn").
+When RAG context provides these auto-injected IDs, always reference elements by their IDs rather than display text.
 
 ACCESSIBILITY ID CONFIDENCE LEVELS:
 When referencing UI elements, be aware that accessibility IDs have different confidence levels:
@@ -77,7 +78,8 @@ you can derive the accessibility identifier from the class name and property nam
 RAG CONTEXT WILL PROVIDE:
 - Explicit accessibility IDs (set in code with .accessibilityIdentifier)
 - Inferred accessibility IDs (derived from property names via swizzling)
-- Both types are equally valid and available at runtime
+- Auto-injected accessibility IDs (for SwiftUI elements)
+- All types are equally valid and available at runtime
 
 ACCESSIBILITY ID CONFIDENCE LEVELS (CRITICAL):
 Not all accessibility IDs carry the same reliability. Understand the hierarchy before writing queries:
@@ -87,28 +89,91 @@ Not all accessibility IDs carry the same reliability. Understand the hierarchy b
    - Guaranteed present at runtime regardless of view structure or swizzling state.
    - ALWAYS prefer these when the RAG context provides them.
 
-2. INFERRED IDs (medium confidence) — derived via runtime swizzling from property names:
+2. AUTO-INJECTED IDs (high confidence) — generated during indexing for SwiftUI elements:
+   - e.g. "MainView_tab_profile", "LoginView_button_signIn", "ProfileView_stepper_fontSize"
+   - Reliable and consistent when the RAG context shows them.
+   - ALWAYS use these exactly as provided when available.
+
+3. INFERRED IDs (medium confidence) — derived via runtime swizzling from property names:
    - e.g. In class LoginViewController, property "var submitButton: UIButton!" → ID "LoginViewController.submitButton"
    - Reliable when swizzling is active, but depend on property name matching and Mirror reflection.
    - Use these when explicit IDs are unavailable.
 
-3. HEURISTIC IDs (lower confidence) — derived from visible labels, titles, or text content:
+4. HEURISTIC IDs (lowest confidence) — derived from visible labels, titles, or text content:
    - e.g. querying app.buttons["Log In"] because the button displays "Log In"
    - Fragile: label changes or localisation will break the query.
-   - Use only as a last resort when neither explicit nor inferred IDs are available.
+   - Use only as a last resort when no other ID type is available.
 
-AUTO-INJECTED ACCESSIBILITY IDS:
+AUTO-INJECTED SwiftUI ACCESSIBILITY IDS (CRITICAL — READ CAREFULLY):
 Interactive SwiftUI elements without explicit identifiers have been auto-tagged during indexing.
-Naming convention: {FileName}_{elementType}_{disambiguator}
-Examples: "FeedScreen_button_feedType", "LoginScreen_textField_username", "ContentView_tab_feed"
-When RAG context includes these IDs, treat them as EXPLICIT — use them directly without modification.
+The injector resolves the enclosing `struct X: View` name, so IDs use the struct name, NOT the file name.
+
+Naming convention: {StructName}_{elementType}_{disambiguator}
+
+Element types: button, textField, secureField, toggle, tab, navigationLink, picker, slider, stepper, datePicker, menu, link, tappableText
+
+Disambiguator rules (in priority order):
+1. Literal string label → camelCase: Button("Log Out") → "{Struct}_button_logOut"
+2. Text from trailing closure → camelCase: Button(action: { }) { Text("Save Changes") } → "{Struct}_button_saveChanges"
+3. SF Symbol semantic name for tabs: .tabItem { Image(systemName: "gear") } → "{Struct}_tab_settings"
+   Common SF Symbol mappings: house.fill→home, gear→settings, person.fill→profile, book→bookmarks,
+   newspaper.fill→news, magnifyingglass→search, heart.fill→favorites, star.fill→favorites
+4. $binding variable name: Toggle(isOn: $darkMode) → "{Struct}_toggle_darkMode"
+5. Image asset name fallback: Button { Image("custom_back_arrow") } → "{Struct}_button_customBackArrow"
+6. Numeric fallback when no label extractable: "{Struct}_button_0", "{Struct}_tab_0"
+7. Collision suffix: when two elements share the same type+disambiguator, an underscore-separated index is appended: "{Struct}_button_save_1"
+
+Label sanitization applied to disambiguators:
+- Localization keys like "settings.profile.title" → uses last segment "title"
+- String interpolation labels (containing \\()) are skipped → numeric fallback
+- Pure numeric labels are skipped → numeric fallback
+- Special characters (!@#$%^&* etc.) are stripped
+
+Container elements (navigationLink, menu) also receive `.accessibilityElement(true)` for reliable XCUITest querying.
+
+ForEach elements append string interpolation for unique runtime IDs:
+   ForEach(items) { item in Button("Select") { } }
+   → .accessibilityIdentifier("{Struct}_button_select_\(item)")
+   The \(variable) part resolves at runtime — use the FULL identifier string including \(variable) in test code.
+
+CRITICAL RULE — ONLY USE IDs FROM THE CONTEXT:
+When the "Accessibility IDs" section lists auto-injected IDs, you MUST use them for element queries.
+Do NOT fall back to display text or label-based queries when an auto-injected ID exists.
+Do NOT invent IDs that look like they follow the naming convention — ONLY use IDs explicitly listed in the context.
+If an element you need is not in the context's ID list, use the FALLBACK QUERY STRATEGY below.
+
+Example — CORRECT usage of auto-injected IDs:
+```swift
+// RAG context lists: ExampleMainView_tab_profile, ExampleProfileView_button_editBio
+let profileTab = app.tabBars.buttons["ExampleMainView_tab_profile"]
+XCTAssertTrue(profileTab.waitForExistence(timeout: 5), "Profile tab should exist")
+profileTab.tap()
+
+let editBioBtn = app.buttons["ExampleProfileView_button_editBio"]
+XCTAssertTrue(editBioBtn.waitForExistence(timeout: 5), "Edit bio button should exist")
+```
+
+Example — WRONG (do NOT do this when auto-injected IDs are available):
+```swift
+// WRONG: using display text instead of auto-injected ID
+let profileTab = app.tabBars.buttons["Profile"]  // BAD — fragile, locale-dependent
+let editBioBtn = app.buttons["Edit Bio"]          // BAD — use the injected ID instead
+```
+
+IMPORTANT: Use auto-injected IDs EXACTLY as shown in RAG context — copy the full identifier string.
+Do NOT guess or fabricate accessibility IDs. Only use IDs that actually appear in the RAG context snippets.
+NEVER construct an ID by combining the naming convention with a guessed label (e.g., do NOT invent "SettingsScreen_toggle_darkMode" if it is not listed under "Accessibility IDs" in the context).
+If the context does not provide an ID for a specific element, use the fallback query strategy below — do NOT fabricate one.
 
 QUERY PREFERENCE RULE: When multiple query options are available for the same element, always choose the highest-confidence option:
 ```swift
-// PREFERRED (explicit ID from RAG context)
+// BEST (explicit ID set in code)
 let loginBtn = app.buttons["LoginViewController.submitButton"]
 
-// ACCEPTABLE (inferred via swizzling, when explicit not available)
+// PREFERRED (auto-injected SwiftUI ID from RAG context)
+let loginBtn = app.buttons["LoginView_button_signIn"]
+
+// ACCEPTABLE (inferred via UIKit swizzling, when explicit not available)
 let loginBtn = app.buttons["LoginViewController.loginButton"]
 
 // LAST RESORT (heuristic, label-based — only if no ID exists in RAG context)
@@ -191,10 +256,29 @@ if !descriptionView.waitForExistence(timeout: 2) && !descriptionField.waitForExi
 }
 ```
 
-LOCALE / KEYBOARD (CRITICAL):
-- ALWAYS set launchArguments before app.launch() to force English keyboard:
+LOCALE / KEYBOARD / LAUNCH ENVIRONMENT (CRITICAL):
+- ALWAYS set launchArguments AND launchEnvironment before app.launch():
   app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+  app.launchEnvironment = ["DISABLE_ANIMATIONS": "1"]
 - This prevents the simulator from switching to the system keyboard language mid-test.
+- NEVER add any Thread Sanitizer or Main Thread Checker arguments — these can cause "Stall on main thread" crashes during XCUITest launches.
+
+ELEMENT TYPE MAPPING FOR AUTO-INJECTED IDs (CRITICAL):
+The element type in the ID tells you which XCUIElement query to use:
+- *_button_* → app.buttons["id"]
+- *_textField_* → app.textFields["id"]
+- *_secureField_* → app.secureTextFields["id"]
+- *_toggle_* → app.switches["id"]
+- *_tab_* → app.tabBars.buttons["id"]
+- *_picker_* → app.pickers["id"]
+- *_slider_* → app.sliders["id"]
+- *_stepper_* → app.steppers["id"]
+- *_datePicker_* → app.datePickers["id"]
+- *_navigationLink_* → app.buttons["id"]
+- *_menu_* → app.buttons["id"]
+- *_link_* → app.buttons["id"] or app.links["id"]
+- *_tappableText_* → app.staticTexts["id"]
+NEVER use app.staticTexts for a *_button_* ID — match the XCUIElement type to the element type in the ID.
 
 FORBIDDEN PATTERNS (will cause build or test failures — ABSOLUTE RULES):
 - NEVER use app.otherElements[] — it does NOT work for SwiftUI views. This applies to ALL identifiers, including screen-level identifiers ending in "Screen". If an accessibilityIdentifier is on a SwiftUI container (Group, VStack, NavigationStack), it will render as otherElements and WILL FAIL.
@@ -239,15 +323,16 @@ if springboardAlert.waitForExistence(timeout: 5) {
 
 MANDATORY PATTERN: Tab Navigation and Screen Verification (CRITICAL):
 ALWAYS navigate to the tab BEFORE verifying elements on that tab.
+ALWAYS use auto-injected accessibility IDs for tabs when available in RAG context.
 ```swift
-// Navigate to a tab FIRST, THEN verify elements on it
-let targetTab = app.tabBars.buttons["TabName"]
-XCTAssertTrue(targetTab.waitForExistence(timeout: 5), "Tab should exist")
+// Navigate to a tab using its auto-injected ID from the "Accessibility IDs" section, THEN verify elements
+let targetTab = app.tabBars.buttons["<tab ID from context>"]  // MUST be copied from context, not invented
+XCTAssertTrue(targetTab.waitForExistence(timeout: 5), "Target tab should exist")
 targetTab.tap()
 
-// NOW verify elements on that screen
-let expectedElement = app.staticTexts["elementIdentifier"]
-XCTAssertTrue(expectedElement.waitForExistence(timeout: 5), "Element should appear on screen")
+// NOW verify elements on destination screen — ONLY use IDs listed in context
+let someButton = app.buttons["<button ID from context>"]  // MUST exist in "Accessibility IDs" section
+XCTAssertTrue(someButton.waitForExistence(timeout: 5), "Button should appear on destination screen")
 ```
 
 FLOW RULES:

@@ -337,6 +337,9 @@ class TestRunner:
 
     async def _build_for_testing(self, device_id: str) -> tuple:
         """Run xcodebuild build-for-testing (incremental)."""
+        project_path = Path(self.xcode_project)
+        testplan_path = project_path.parent / "TestataAutoTest.xctestplan"
+
         cmd = [
             'xcodebuild', 'build-for-testing',
             '-project', self.xcode_project,
@@ -344,6 +347,8 @@ class TestRunner:
             '-destination', f'platform=iOS Simulator,id={device_id}',
             '-quiet',
         ]
+        if testplan_path.exists():
+            cmd.extend(['-testPlan', 'TestataAutoTest'])
         logger.info(f"Build command: {' '.join(cmd)}")
         build_start = time.time()
         process = await asyncio.create_subprocess_exec(
@@ -417,7 +422,10 @@ class TestRunner:
         logger.info(f"Injecting accessibility IDs into {app_source_root}")
         backup = inject_directory(
             app_source_root,
-            exclude_dirs={"Pods", ".build", "DerivedData", ".git"},
+            exclude_dirs={
+                "Pods", ".build", "DerivedData", ".git",
+                self.xcode_ui_test_target,  # Don't inject IDs into test files
+            },
         )
         logger.info(f"Accessibility injection complete: {len(backup)} files backed up")
 
@@ -437,13 +445,19 @@ class TestRunner:
             # Step 2: Bring simulator to front for video capture
             await self._bring_simulator_to_front(device_id)
 
-            # Step 3: Run the test
+            # Step 3: Run the test (test-without-building since we already built above)
             only_testing = f'{self.xcode_ui_test_target}/{class_name}'
             if test_method:
                 only_testing += f'/{test_method}'
 
+            # Use Testara's custom test plan which disables the Main Thread
+            # Checker and Thread Performance Checker — heavy SDKs (Sentry,
+            # analytics) often stall the main thread at launch, causing
+            # "Stall on main thread" crashes that kill the test before it runs.
+            testplan_path = project_path.parent / "TestataAutoTest.xctestplan"
+
             cmd = [
-                'xcodebuild', 'test',
+                'xcodebuild', 'test-without-building',
                 '-project', self.xcode_project,
                 '-scheme', self.xcode_scheme,
                 '-destination', f'id={device_id}',
@@ -453,8 +467,11 @@ class TestRunner:
                 '-testLanguage', 'en',
                 '-testRegion', 'en_US',
             ]
+            if testplan_path.exists():
+                cmd.extend(['-testPlan', 'TestataAutoTest'])
 
             logger.info(f"Running: {' '.join(cmd)}")
+            test_start = time.time()
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -466,23 +483,31 @@ class TestRunner:
                 stdout, _ = await asyncio.wait_for(process.communicate(), timeout=300)
             except asyncio.TimeoutError:
                 process.kill()
+                # Read whatever output was produced before timeout
+                try:
+                    stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+                    partial_logs = stdout.decode(errors='replace')
+                except Exception:
+                    partial_logs = ""
+                logger.error(f"Test timed out after 5 min. Partial output:\n{partial_logs[-3000:]}")
                 return {
                     "success": False,
-                    "logs": "Test execution timed out after 5 minutes",
+                    "logs": f"Test execution timed out after 5 minutes.\n\nPartial xcodebuild output:\n{partial_logs[-5000:]}",
                     "duration": time.time() - start_time,
                 }
 
             logs = stdout.decode(errors='replace')
             duration = time.time() - start_time
 
+            test_duration = time.time() - test_start
             success = '** TEST SUCCEEDED **' in logs
             if '** TEST FAILED **' in logs:
                 success = False
 
-            logger.info(f"Test {'PASSED' if success else 'FAILED'} in {duration:.1f}s")
+            logger.info(f"Test {'PASSED' if success else 'FAILED'} in {test_duration:.1f}s (total {duration:.1f}s)")
             logger.info(f"xcodebuild returncode={process.returncode}")
-            # Log last 500 chars of output for quick debugging
-            logger.debug(f"Test output tail:\n{logs[-500:]}")
+            # Log test output for debugging (shows where test got stuck)
+            logger.info(f"Test output tail:\n{logs[-2000:]}")
 
             return {
                 "success": success,
