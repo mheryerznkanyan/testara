@@ -423,6 +423,9 @@ class TestRunner:
                 }
             logger.info("Build succeeded")
 
+            # Step 1.5: Pre-flight WDA cleanup (defense-in-depth)
+            self._ensure_no_wda(device_id)
+
             # Step 2: Bring simulator to front for video capture
             await self._bring_simulator_to_front(device_id)
 
@@ -451,17 +454,65 @@ class TestRunner:
                 stderr=asyncio.subprocess.STDOUT,
             )
 
+            # Progressive output reading with diagnostic logging
+            output_buffer = []
+            last_log_time = time.time()
+            test_start_time = time.time()
+            
             try:
-                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=300)
-            except asyncio.TimeoutError:
+                while True:
+                    if time.time() - test_start_time > 300:  # 5 minute timeout
+                        logger.error("Test timeout reached (300s)")
+                        process.kill()
+                        return {
+                            "success": False,
+                            "logs": "Test execution timed out after 5 minutes\n" + "".join(output_buffer),
+                            "duration": time.time() - start_time,
+                        }
+                    
+                    try:
+                        line = await asyncio.wait_for(
+                            process.stdout.readline(), 
+                            timeout=1.0
+                        )
+                    except asyncio.TimeoutError:
+                        # Check process status during silence
+                        if process.returncode is not None:
+                            break
+                        
+                        # Log progress every 30s
+                        if time.time() - last_log_time > 30:
+                            logger.info(f"Test still running... ({int(time.time() - test_start_time)}s elapsed)")
+                            last_log_time = time.time()
+                            
+                            # Check for stuck patterns in recent output
+                            recent = "".join(output_buffer[-50:])
+                            if "Waiting for" in recent or "DTServiceHub" in recent:
+                                logger.warning("Detected potential testmanagerd hang pattern in output")
+                        continue
+                    
+                    if not line:
+                        break
+                    
+                    decoded_line = line.decode(errors='replace')
+                    output_buffer.append(decoded_line)
+                    
+                    # Log interesting events immediately
+                    if "TEST SUCCEEDED" in decoded_line or "TEST FAILED" in decoded_line:
+                        logger.info(f"Test result: {decoded_line.strip()}")
+                
+                await process.wait()
+                
+            except Exception as e:
+                logger.error(f"Error during test execution: {e}")
                 process.kill()
                 return {
                     "success": False,
-                    "logs": "Test execution timed out after 5 minutes",
+                    "logs": f"Test execution error: {e}\n" + "".join(output_buffer),
                     "duration": time.time() - start_time,
                 }
 
-            logs = stdout.decode(errors='replace')
+            logs = "".join(output_buffer)
             duration = time.time() - start_time
 
             success = '** TEST SUCCEEDED **' in logs
@@ -488,7 +539,38 @@ class TestRunner:
             }
 
     @staticmethod
+    def _ensure_no_wda(device_udid: str):
+        """
+        Pre-flight check: kill any lingering WDA processes before test execution.
+        Defense-in-depth to catch anything appium_discovery_service missed.
+        """
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "WebDriverAgent"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                pids = result.stdout.strip().split('\n')
+                pids = [p for p in pids if p]
+                if pids:
+                    logger.warning(f"Found lingering WDA processes: {pids}, force killing...")
+                    subprocess.run(["pkill", "-9", "-f", "WebDriverAgent"], timeout=2)
+                    subprocess.run(
+                        ["xcrun", "simctl", "terminate", device_udid, 
+                         "com.apple.test.WebDriverAgentRunner-Runner"],
+                        capture_output=True,
+                        timeout=2
+                    )
+                    time.sleep(2)  # Let testmanagerd settle
+                    logger.info("WDA pre-flight cleanup complete")
+        except Exception as e:
+            logger.warning(f"WDA pre-flight check failed: {e}")
+    
+    @staticmethod
     def _extract_test_method(test_code: str) -> Optional[str]:
         """Extract the test method name from Swift code."""
-        match = re.search(r'func (test\w+)\(\)', test_code)
+        # Handle: func testFoo(), func testFoo() async, func testFoo() async throws
+        match = re.search(r'func (test\w+)\(\)\s*(?:async\s*)?(?:throws\s*)?', test_code)
         return match.group(1) if match else None

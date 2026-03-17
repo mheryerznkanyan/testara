@@ -83,6 +83,80 @@ class AppiumDiscoveryService:
                 self._server_proc.kill()
             self._server_proc = None
 
+    def _kill_wda(self, device_udid: str):
+        """
+        Robustly kill all WebDriverAgent processes to free testmanagerd.
+        
+        WDA blocks testmanagerd connection needed by xcodebuild test runner.
+        Must verify processes are dead before proceeding.
+        """
+        logger.info("Killing WebDriverAgent processes...")
+        
+        # Step 1: Graceful termination via simctl
+        try:
+            subprocess.run(
+                ["xcrun", "simctl", "terminate", device_udid, "com.apple.test.WebDriverAgentRunner-Runner"],
+                capture_output=True,
+                timeout=3
+            )
+        except Exception as e:
+            logger.warning(f"simctl terminate failed: {e}")
+        
+        # Step 2: SIGTERM all WDA PIDs
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "WebDriverAgent"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            pids = result.stdout.strip().split('\n') if result.returncode == 0 else []
+            pids = [p for p in pids if p]  # Filter empty
+            
+            if pids:
+                logger.info(f"Found WDA PIDs: {pids}")
+                for pid in pids:
+                    try:
+                        subprocess.run(["kill", "-TERM", pid], timeout=1)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"pgrep/kill failed: {e}")
+        
+        # Step 3: Poll for up to 5s to confirm death
+        deadline = time.time() + 5
+        escalated = False
+        
+        while time.time() < deadline:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-f", "WebDriverAgent"],
+                    capture_output=True,
+                    timeout=1
+                )
+                if result.returncode != 0:  # No processes found
+                    logger.info("All WDA processes confirmed dead")
+                    time.sleep(1)  # Settle time for testmanagerd to release
+                    return
+            except Exception:
+                pass
+            
+            # Escalate to SIGKILL after 3s
+            if not escalated and time.time() - deadline + 5 > 3:
+                logger.warning("WDA still alive after 3s, escalating to SIGKILL")
+                try:
+                    subprocess.run(
+                        ["pkill", "-9", "-f", "WebDriverAgent"],
+                        timeout=2
+                    )
+                except Exception:
+                    pass
+                escalated = True
+            
+            time.sleep(0.5)
+        
+        logger.warning("WDA kill timeout reached, some processes may still be alive")
+
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
@@ -186,3 +260,6 @@ class AppiumDiscoveryService:
                     driver.quit()
                 except Exception:
                     pass
+            
+            # Critical: Kill all WDA processes to free testmanagerd for xcodebuild
+            self._kill_wda(device_udid)
