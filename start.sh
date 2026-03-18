@@ -69,7 +69,7 @@ if [ ! -f .env ]; then
     echo -e "${CYAN}Please edit .env and set:${NC}"
     echo -e "  - ANTHROPIC_API_KEY"
     echo -e "  - PROJECT_ROOT"
-    echo -e "\nThen re-run: ${BOLD}./start_enhanced.sh${NC}"
+    echo -e "\nThen re-run: ${BOLD}./start.sh${NC}"
     exit 1
 fi
 
@@ -93,26 +93,62 @@ echo -e "${BLUE}►${NC} Installing frontend dependencies..."
 cd frontend && npm install --silent && cd ..
 echo -e "${GREEN}✓${NC} Frontend dependencies installed"
 
-# Handle --reindex flag: clear RAG store and regenerate
+# Handle --reindex flag: force clear RAG store
 if [[ "$*" == *"--reindex"* ]]; then
     echo -e "\n${CYAN}${BOLD}Reindexing Project${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}►${NC} Clearing old RAG index..."
     rm -rf "$PROJECT_DIR/rag_store"
     rm -f "$PROJECT_DIR/.testara_setup_done"
-    echo -e "${GREEN}✓${NC} RAG store cleared — will be rebuilt on first request"
+    echo -e "${GREEN}✓${NC} RAG store cleared"
 fi
 
-# Setup Xcode test file (first run only)
+# Setup Xcode project (runs on first launch or when PROJECT_ROOT changes)
+SETUP_NEEDED=false
 if [ ! -f .testara_setup_done ]; then
+    SETUP_NEEDED=true
+elif [ -f .testara_setup_done ]; then
+    PREV_ROOT=$(cat .testara_setup_done 2>/dev/null || echo "")
+    if [ "$PREV_ROOT" != "$PROJECT_ROOT" ]; then
+        echo -e "\n${YELLOW}⚠${NC}  PROJECT_ROOT changed: re-running setup"
+        SETUP_NEEDED=true
+    fi
+fi
+
+if [ "$SETUP_NEEDED" = true ]; then
     echo -e "\n${CYAN}${BOLD}Setting Up Xcode Project${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     $PYTHON backend/app/utils/add_test_file.py
     if [ $? -eq 0 ]; then
-        touch .testara_setup_done
+        echo "$PROJECT_ROOT" > .testara_setup_done
         echo -e "${GREEN}✓${NC} Xcode setup complete"
     else
         echo -e "${YELLOW}⚠${NC}  Xcode setup needs manual steps (see above)"
+    fi
+fi
+
+# RAG indexing (runs on first launch or when PROJECT_ROOT changes)
+RAG_TRACKER="rag_store/.indexed_project"
+REINDEX_NEEDED=false
+if [ ! -f "$RAG_TRACKER" ]; then
+    REINDEX_NEEDED=true
+elif [ "$(cat "$RAG_TRACKER" 2>/dev/null)" != "$(cd "$PROJECT_ROOT" && pwd)" ]; then
+    echo -e "\n${YELLOW}⚠${NC}  Project changed: re-indexing RAG store"
+    # Clear old index and stale context
+    rm -rf rag_store/ 2>/dev/null
+    REINDEX_NEEDED=true
+fi
+
+if [ "$REINDEX_NEEDED" = true ]; then
+    echo -e "\n${CYAN}${BOLD}Indexing Project for RAG${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}►${NC} Indexing $PROJECT_ROOT..."
+    $PYTHON -m rag.cli ingest --app-dir "$PROJECT_ROOT" --persist ./rag_store
+    if [ $? -eq 0 ]; then
+        echo "$(cd "$PROJECT_ROOT" && pwd)" > "$RAG_TRACKER"
+        echo -e "${GREEN}✓${NC} RAG indexing complete"
+    else
+        echo -e "${YELLOW}⚠${NC}  RAG indexing failed (tests may have limited context)"
     fi
 fi
 

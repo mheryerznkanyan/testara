@@ -21,6 +21,7 @@ from langchain_core.documents import Document
 
 from rag.chunker import build_chunks_for_file, Chunk
 from rag.auditor import audit_accessibility
+from rag.localization_parser import build_localization_chunks
 from rag.storyboard_parser import extract_storyboard_ids
 from rag.store import (
     build_vectorstore,
@@ -35,6 +36,7 @@ from rag.store import (
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 _STORYBOARD_SUFFIXES = {".storyboard", ".xib"}
+_LOCALIZATION_SUFFIXES = {".xcstrings", ".strings"}
 _EXCLUDE_DIRS = {"Pods", ".git", "build", "DerivedData", ".build", "vendor"}
 
 
@@ -48,26 +50,70 @@ def _iter_storyboard_files(root: Path):
                 yield Path(dirpath) / f
 
 
+def _iter_localization_files(root: Path):
+    """Yield all .xcstrings and .strings files under *root*, skipping noise dirs."""
+    import os
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS and not d.startswith(".")]
+        for f in files:
+            if Path(f).suffix.lower() in _LOCALIZATION_SUFFIXES:
+                yield Path(dirpath) / f
+
+
+def _resolve_localized_strings(swift_text: str, l10n_map: dict) -> str:
+    """Inject resolved localization values as inline comments in Swift code.
+
+    Transforms:
+        String(localized: "feed.type.new", bundle: .main)
+    Into:
+        String(localized: "feed.type.new", bundle: .main) /* → "New" */
+
+    This lets the LLM see the actual displayed UI text directly in the code
+    context, eliminating the need to cross-reference a separate localization chunk.
+    """
+    import re
+
+    def _replace(m: re.Match) -> str:
+        full = m.group(0)
+        key = m.group(1)
+        value = l10n_map.get(key)
+        if value:
+            return f'{full} /* → "{value}" */'
+        return full
+
+    # Match String(localized: "key") with optional extra params like bundle:
+    return re.sub(
+        r'String\s*\(\s*localized\s*:\s*"([^"]+)"[^)]*\)',
+        _replace,
+        swift_text,
+    )
+
+
 def _generate_app_context(persist_dir: str, collection: str, embed_model: str):
-    """Generate APP_CONTEXT.md after indexing"""
-    # Import here to avoid circular dependencies
+    """Generate APP_CONTEXT.md after indexing.
+
+    Uses the *persist_dir* that was just populated by ``cmd_ingest`` so
+    that the RAG query reads from the correct store regardless of CWD.
+    """
     import sys
     from pathlib import Path
-    
-    # Add backend to path if not already there
+
     backend_path = Path(__file__).parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
-    
+
     from app.core.config import settings
     from app.services.rag_service import RAGService
     from app.services.context_extractor import AppContextExtractor
-    
-    # Create RAG service pointing to this index
+
+    # Override rag_persist_dir so RAGService reads from the store we just
+    # wrote to — not whatever relative path settings resolved to.
+    settings.rag_persist_dir = str(Path(persist_dir).resolve())
+    settings.rag_collection = collection
+
     rag_service = RAGService(settings=settings)
     extractor = AppContextExtractor(rag_service)
-    
-    # Generate and save
+
     output_path = Path(persist_dir) / "APP_CONTEXT.md"
     extractor.save_to_file(str(output_path))
 
@@ -88,11 +134,28 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print("ERROR: no .swift files found under app-dir", file=sys.stderr)
         return 2
 
+    # ── Pre-parse localization files to resolve strings in Swift chunks ─────
+    from rag.localization_parser import parse_xcstrings, parse_localizable_strings
+    l10n_map: dict[str, str] = {}
+    for loc_path in _iter_localization_files(app_dir):
+        try:
+            suffix = loc_path.suffix.lower()
+            if suffix == ".xcstrings":
+                l10n_map.update(parse_xcstrings(loc_path))
+            elif suffix == ".strings":
+                l10n_map.update(parse_localizable_strings(loc_path))
+        except Exception:
+            pass
+    # ────────────────────────────────────────────────────────────────────────
+
     for p in swift_files:
         rel = normalize_path(p, app_dir)
         text = read_text(p)
         if not text.strip():
             continue
+        # Resolve localized strings inline so the LLM sees actual UI text
+        if l10n_map:
+            text = _resolve_localized_strings(text, l10n_map)
         all_chunks.extend(build_chunks_for_file(text, rel))
 
     # ── Storyboard / XIB ingestion ──────────────────────────────────────────
@@ -133,6 +196,19 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     all_chunks.extend(storyboard_chunks)
     # ────────────────────────────────────────────────────────────────────────
 
+    # ── Localization file ingestion (.xcstrings, .strings) ─────────────────
+    localization_chunks: List[Chunk] = []
+    localization_files = list(_iter_localization_files(app_dir))
+    for loc_path in localization_files:
+        rel = normalize_path(loc_path, app_dir)
+        try:
+            localization_chunks.extend(build_localization_chunks(loc_path, rel))
+        except Exception as exc:
+            print(f"WARNING: skipping {rel}: {exc}", file=sys.stderr)
+
+    all_chunks.extend(localization_chunks)
+    # ────────────────────────────────────────────────────────────────────────
+
     findings, summary = audit_accessibility(all_chunks)
 
     audit_doc = Document(
@@ -163,8 +239,10 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     vs = build_vectorstore(args.persist, args.collection, args.embed_model)
 
-    # Prune docs for Swift files that no longer exist on disk
+    # Prune docs for files that no longer exist on disk
     current_rel_paths = {normalize_path(p, app_dir) for p in swift_files}
+    current_rel_paths |= {normalize_path(p, app_dir) for p in storyboard_files}
+    current_rel_paths |= {normalize_path(p, app_dir) for p in localization_files}
     pruned = prune_stale_documents(vs, current_rel_paths)
 
     upsert_documents(vs, docs)
@@ -183,7 +261,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         "status": "ok",
         "indexed_swift_files": len(swift_files),
         "indexed_storyboard_files": len(storyboard_files),
+        "indexed_localization_files": len(localization_files),
         "storyboard_chunks": len(storyboard_chunks),
+        "localization_chunks": len(localization_chunks),
         "documents_upserted": len(docs),
         "persist_dir": args.persist,
         "collection": args.collection,

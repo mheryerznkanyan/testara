@@ -1,6 +1,6 @@
 """Configuration settings using Pydantic BaseSettings"""
-import glob
 import logging
+import re
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -12,27 +12,55 @@ _ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 def _find_xcodeproj(project_root: str) -> str:
-    """Auto-detect .xcodeproj inside PROJECT_ROOT."""
+    """Auto-detect .xcodeproj inside PROJECT_ROOT (excluding Pods)."""
     if not project_root:
         return ""
-    matches = glob.glob(str(Path(project_root) / "*.xcodeproj"))
+    matches = [
+        p for p in Path(project_root).glob("*.xcodeproj")
+        if "Pods.xcodeproj" not in str(p)
+    ]
     if matches:
         logger.info(f"Auto-detected Xcode project: {matches[0]}")
-        return matches[0]
+        return str(matches[0])
     return ""
 
 
 def _infer_scheme(xcodeproj: str) -> str:
-    """Infer scheme name from .xcodeproj filename."""
+    """Find the main app scheme from xcshareddata."""
     if not xcodeproj:
         return ""
-    return Path(xcodeproj).stem
+    project_name = Path(xcodeproj).stem
+    schemes_dir = Path(xcodeproj) / "xcshareddata" / "xcschemes"
+    if schemes_dir.exists():
+        # Prefer scheme matching project name
+        exact = schemes_dir / f"{project_name}.xcscheme"
+        if exact.exists():
+            return project_name
+        # Fallback: first non-test scheme
+        for s in schemes_dir.glob("*.xcscheme"):
+            if "Test" not in s.stem:
+                return s.stem
+    return project_name  # default assumption
 
 
-def _infer_ui_test_target(xcodeproj: str) -> str:
-    """Infer UI test target name from .xcodeproj filename."""
+def _find_ui_test_target(xcodeproj: str) -> str:
+    """Find actual UI test target name from project.pbxproj."""
     if not xcodeproj:
         return ""
+    pbxproj_path = Path(xcodeproj) / "project.pbxproj"
+    if not pbxproj_path.exists():
+        return Path(xcodeproj).stem + "UITests"
+    try:
+        lines = pbxproj_path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if 'product-type.bundle.ui-testing' in line:
+                # Walk backwards to find the target block header
+                for j in range(i - 1, max(i - 50, 0), -1):
+                    m = re.match(r'\s*\w+\s*/\*\s*(.+?)\s*\*/\s*=\s*\{', lines[j])
+                    if m:
+                        return m.group(1)
+    except Exception as e:
+        logger.warning(f"Could not parse pbxproj for UI test target: {e}")
     return Path(xcodeproj).stem + "UITests"
 
 
@@ -94,4 +122,4 @@ if not settings.xcode_project:
 if not settings.xcode_scheme:
     settings.xcode_scheme = _infer_scheme(settings.xcode_project)
 if not settings.xcode_ui_test_target:
-    settings.xcode_ui_test_target = _infer_ui_test_target(settings.xcode_project)
+    settings.xcode_ui_test_target = _find_ui_test_target(settings.xcode_project)

@@ -308,6 +308,42 @@ class TestRunner:
         match = re.search(r'(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase', test_code)
         return match.group(1) if match else None
 
+    async def _terminate_running_apps(self, device_id: str):
+        """Terminate user apps on the simulator to ensure a clean state before testing."""
+        try:
+            logger.info("Terminating running apps on simulator for clean state...")
+            # Get the bundle ID from the Xcode project's build settings
+            proc = await asyncio.create_subprocess_exec(
+                'xcodebuild', '-project', self.xcode_project,
+                '-scheme', self.xcode_scheme,
+                '-showBuildSettings',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            output = stdout.decode(errors='replace')
+
+            bundle_id = None
+            for line in output.splitlines():
+                if 'PRODUCT_BUNDLE_IDENTIFIER' in line:
+                    bundle_id = line.split('=', 1)[1].strip()
+                    break
+
+            if bundle_id:
+                logger.info(f"Terminating app with bundle ID: {bundle_id}")
+                proc = await asyncio.create_subprocess_exec(
+                    'xcrun', 'simctl', 'terminate', device_id, bundle_id,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.communicate()
+                # Small delay to let the app fully terminate
+                await asyncio.sleep(1)
+            else:
+                logger.warning("Could not determine bundle ID, skipping app termination")
+        except Exception as e:
+            logger.warning(f"Failed to terminate running apps (non-fatal): {e}")
+
     async def _bring_simulator_to_front(self, device_id: str):
         """Bring the Simulator app to the foreground (needed for video recording)."""
         try:
@@ -446,6 +482,9 @@ class TestRunner:
         logger.info(f"Test file written: {dest_file.stat().st_size} bytes")
 
         try:
+            # Step 0: Terminate any running app to ensure clean state
+            await self._terminate_running_apps(device_id)
+
             # Step 1: Build for testing (incremental)
             logger.info("Building project for testing...")
             build_ok, build_output = await self._build_for_testing(device_id)
