@@ -35,6 +35,9 @@ _SHEET_RE = re.compile(r"\.sheet\s*\(", re.MULTILINE)
 _FULLSCREEN_RE = re.compile(r"\.fullScreenCover\s*\(", re.MULTILINE)
 _NAV_DEST_RE = re.compile(r"\.navigationDestination\s*\(", re.MULTILINE)
 
+# SwiftUI TabView — destination views listed inside TabView { ... }
+_TAB_VIEW_RE = re.compile(r"TabView\s*(?:\([^)]*\))?\s*\{", re.MULTILINE)
+
 # UIKit navigation patterns
 _PUSH_VC_RE = re.compile(r"pushViewController\s*\(", re.MULTILINE)
 _PRESENT_RE = re.compile(r"(?<!override\s)present\s*\(\s*\w+", re.MULTILINE)
@@ -199,10 +202,14 @@ class NavigationService:
 
         # Login prerequisites
         if entry_is_login:
+            from app.core.config import settings
             lines.append("**Test Setup Requirements:**")
             lines.append("- App starts at login screen")
             lines.append("- Most features require login first")
-            lines.append("- CRITICAL: Include login steps in your test before navigating to other screens")
+            lines.append("- CRITICAL: You MUST include login steps at the START of every test before navigating to other screens")
+            if settings.test_credentials_email and settings.test_credentials_password:
+                lines.append(f"- Login credentials to use: email=\"{settings.test_credentials_email}\", password=\"{settings.test_credentials_password}\"")
+                lines.append("- Login steps: tap email field, type email, tap password field, type password, tap login button")
             lines.append("")
 
         # Instructions
@@ -213,6 +220,48 @@ class NavigationService:
         lines.append("")
 
         return "\n".join(lines)
+
+    def get_navigation_path(self, test_description: str) -> dict:
+        """Return structured navigation data for programmatic use.
+
+        Returns:
+            {
+                "entry_point": "ContentView",
+                "target_screens": [
+                    {"name": "SettingsView", "path": ["ContentView", "HomeView", "SettingsView"]}
+                ],
+            }
+        """
+        if not self._extracted:
+            self.extract()
+
+        desc_lower = test_description.lower()
+
+        # Find relevant screens mentioned in description
+        relevant: List[_Screen] = []
+        for s in self._screens:
+            base = s.name.replace("View", "").replace("Controller", "").replace("Screen", "").lower()
+            if base in desc_lower or s.name.lower() in desc_lower:
+                relevant.append(s)
+
+        reachability = self._build_reachability()
+
+        targets = []
+        for s in relevant:
+            path = reachability.get(s.name)
+            if not path and self._entry_point and s.name != self._entry_point:
+                # BFS couldn't find a path (e.g. TabView navigation not detected),
+                # but we know the entry point — provide [entry, target] so Appium
+                # at least attempts navigation via element matching.
+                path = [self._entry_point, s.name]
+            elif not path:
+                path = [s.name]
+            targets.append({"name": s.name, "path": path})
+
+        return {
+            "entry_point": self._entry_point,
+            "target_screens": targets,
+        }
 
     # ---- private helpers ---------------------------------------------------
 
@@ -253,6 +302,16 @@ class NavigationService:
                 dest_m = _DESTINATION_RE.search(context)
                 dest = dest_m.group(1) if dest_m else None
                 self._actions.append(_NavAction(screen_name, dest, method, line))
+
+        # TabView: extract all destination views inside the TabView body
+        for m in _TAB_VIEW_RE.finditer(source):
+            # Grab a larger context window to capture all tab destinations
+            context = source[m.start(): m.start() + 2000]
+            line = source[: m.start()].count("\n") + 1
+            for dest_m in _DESTINATION_RE.finditer(context):
+                dest = dest_m.group(1)
+                if dest != screen_name:  # avoid self-reference
+                    self._actions.append(_NavAction(screen_name, dest, "TabView", line))
 
     def _screen_for_file(self, rel_path: str) -> Optional[str]:
         for s in self._screens:

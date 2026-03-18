@@ -35,14 +35,18 @@ async def run_test(request: Request, body: TestExecutionRequest):
     Returns video URL, test results, and execution logs.
     """
     test_runner = request.app.state.test_runner
-    
+    lock = request.app.state.test_execution_lock
+
     try:
-        result = await test_runner.run_test(
-            test_code=body.test_code,
-            app_name=body.app_name,
-            device=body.device,
-            ios_version=body.ios_version
-        )
+        async with lock:
+            logger.info("Test execution lock acquired — Appium discovery blocked until test completes")
+            result = await test_runner.run_test(
+                test_code=body.test_code,
+                app_name=body.app_name,
+                device=body.device,
+                ios_version=body.ios_version
+            )
+        logger.info("Test execution lock released")
         
         # Build video URL if recording succeeded
         video_url = None

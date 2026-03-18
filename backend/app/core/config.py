@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     appium_startup_timeout: int = 30
     appium_discovery_timeout: int = 60
 
+    # Test credentials: injected into prompt so LLM can generate login steps
+    test_credentials_email: str = ""
+    test_credentials_password: str = ""
+
+    # Launch environment: key=value pairs passed to the app via launchEnvironment
+    # Use this to disable heavy SDKs (Sentry, Firebase, etc.) that cause main thread stalls
+    # Format: "KEY1=VALUE1,KEY2=VALUE2"  e.g. "EMERGE_IS_RUNNING_FOR_SNAPSHOTS=1,DISABLE_ANALYTICS=1"
+    launch_environment: str = ""
+
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
 

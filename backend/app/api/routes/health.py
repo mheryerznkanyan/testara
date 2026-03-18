@@ -22,6 +22,7 @@ async def health():
         "llm_configured": bool(settings.anthropic_api_key),
         "model": settings.anthropic_model,
         "auth_enabled": bool(settings.api_key),
+        "appium_enabled": settings.appium_enabled,
     }
 
 

@@ -14,7 +14,7 @@ from tenacity import (
 from app.core.prompts import RUNTIME_TREE_INSTRUCTIONS, XCTEST_SYSTEM_PROMPT, XCUITEST_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
-    from app.utils.accessibility_tree_parser import AccessibilitySnapshot
+    from app.utils.accessibility_tree_parser import AccessibilitySnapshot, MultiScreenSnapshot
 from app.schemas.test_schemas import TestGenerationRequest, TestGenerationResponse
 from app.utils.swift_utils import extract_class_name, strip_code_fences
 from app.utils.validators import (
@@ -80,6 +80,22 @@ class TestGenerator:
             raise ValueError("test_type must be 'unit' or 'ui'")
 
         system_prompt = XCTEST_SYSTEM_PROMPT if test_type == "unit" else XCUITEST_SYSTEM_PROMPT
+
+        # Inject launch environment into setup template if configured
+        from app.core.config import settings
+        if settings.launch_environment and test_type == "ui":
+            env_lines = []
+            for pair in settings.launch_environment.split(","):
+                pair = pair.strip()
+                if "=" in pair:
+                    key, value = pair.split("=", 1)
+                    env_lines.append(f'    app.launchEnvironment["{key.strip()}"] = "{value.strip()}"')
+            if env_lines:
+                env_block = "\n".join(env_lines)
+                system_prompt = system_prompt.replace(
+                    '    app.launch()\n}',
+                    f'{env_block}\n    app.launch()\n}}',
+                )
         default_class_name = "GeneratedUnitTests" if test_type == "unit" else "GeneratedUITests"
 
         context_section = build_context_section(request.app_context)

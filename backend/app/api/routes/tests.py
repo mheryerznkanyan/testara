@@ -51,6 +51,7 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
     # Extract and inject navigation context (like v1 did)
     navigation_context_str = ""
     navigation_metadata = {}
+    nav_service = None
     if settings.project_root:
         try:
             nav_service = NavigationService(settings.project_root)
@@ -81,18 +82,34 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         include_comments=body.include_comments,
     )
 
-    # Appium discovery (optional)
+    # Appium discovery (optional) — with multi-screen navigation
     accessibility_snapshot = None
-    if body.discovery_enabled and body.bundle_id and body.device_udid:
+    lock = request.app.state.test_execution_lock
+    if body.discovery_enabled and body.bundle_id and body.device_udid and not lock.locked():
         appium_service = getattr(request.app.state, "appium_service", None)
         if appium_service:
+            # Get navigation path from static analysis
+            nav_path = None
+            if nav_service:
+                try:
+                    nav_data = nav_service.get_navigation_path(enriched_description)
+                    targets = nav_data.get("target_screens", [])
+                    if targets:
+                        nav_path = targets[0]["path"]
+                        logger.info("Navigation path for discovery: %s", " -> ".join(nav_path))
+                except Exception as e:
+                    logger.warning("Failed to get navigation path: %s", e)
+
             try:
                 accessibility_snapshot = await appium_service.discover(
                     bundle_id=body.bundle_id,
                     device_udid=body.device_udid,
+                    navigation_path=nav_path,
+                    llm=getattr(request.app.state, "llm", None),
                 )
                 logger.info(
-                    "Appium discovery complete: %d interactive elements",
+                    "Appium discovery complete: %d screens, %d interactive elements on target",
+                    len(accessibility_snapshot.screens),
                     len(accessibility_snapshot.interactive_elements()),
                 )
             except Exception as e:

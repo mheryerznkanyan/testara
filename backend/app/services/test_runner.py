@@ -333,6 +333,37 @@ class TestRunner:
         except Exception as e:
             logger.warning(f"Could not bring simulator to front: {e}")
 
+    async def _ensure_no_wda(self, device_id: str):
+        """Kill any lingering WDA processes before test execution (defense-in-depth)."""
+        proc = await asyncio.create_subprocess_exec(
+            'pgrep', '-f', 'WebDriverAgent',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if stdout.strip():
+            pids = stdout.decode().strip().split('\n')
+            logger.warning(
+                "Found %d lingering WDA process(es) before test execution, force-killing...",
+                len(pids),
+            )
+            for pid in pids:
+                await asyncio.create_subprocess_exec(
+                    'kill', '-9', pid.strip(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            await asyncio.create_subprocess_exec(
+                'xcrun', 'simctl', 'terminate', device_id,
+                'com.facebook.WebDriverAgentRunner.xctrunner',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.sleep(2)  # Let testmanagerd release
+            logger.info("Lingering WDA processes killed, testmanagerd should be free")
+        else:
+            logger.info("No WDA processes found — testmanagerd is clear")
+
     async def _build_for_testing(self, device_id: str) -> tuple:
         """Run xcodebuild build-for-testing (incremental)."""
         cmd = [
@@ -342,6 +373,10 @@ class TestRunner:
             '-destination', f'platform=iOS Simulator,id={device_id}',
             '-quiet',
         ]
+        test_plan = os.environ.get('XCODE_TEST_PLAN')
+        if test_plan:
+            cmd.insert(-1, '-testPlan')
+            cmd.insert(-1, test_plan)
         logger.info(f"Build command: {' '.join(cmd)}")
         build_start = time.time()
         process = await asyncio.create_subprocess_exec(
@@ -423,16 +458,19 @@ class TestRunner:
                 }
             logger.info("Build succeeded")
 
-            # Step 2: Bring simulator to front for video capture
+            # Step 2: Ensure no WDA processes block testmanagerd
+            await self._ensure_no_wda(device_id)
+
+            # Step 3: Bring simulator to front for video capture
             await self._bring_simulator_to_front(device_id)
 
-            # Step 3: Run the test
+            # Step 4: Run the test
             only_testing = f'{self.xcode_ui_test_target}/{class_name}'
             if test_method:
                 only_testing += f'/{test_method}'
 
             cmd = [
-                'xcodebuild', 'test',
+                'xcodebuild', 'test-without-building',
                 '-project', self.xcode_project,
                 '-scheme', self.xcode_scheme,
                 '-destination', f'id={device_id}',
@@ -442,30 +480,78 @@ class TestRunner:
                 '-testLanguage', 'en',
                 '-testRegion', 'en_US',
             ]
+            test_plan = os.environ.get('XCODE_TEST_PLAN')
+            if test_plan:
+                cmd.extend(['-testPlan', test_plan])
 
             logger.info(f"Running: {' '.join(cmd)}")
+
+            # Force unbuffered I/O so xcodebuild flushes output immediately
+            # (piped stdout causes full buffering by default, hiding test progress)
+            env = os.environ.copy()
+            env["NSUnbufferedIO"] = "YES"
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
 
-            try:
-                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=300)
-            except asyncio.TimeoutError:
-                process.kill()
-                return {
-                    "success": False,
-                    "logs": "Test execution timed out after 5 minutes",
-                    "duration": time.time() - start_time,
-                }
+            # Progressive output reading with diagnostic logging
+            output_chunks = []
+            test_timeout = 300
+            test_start = time.time()
+            stuck_warned = False
 
-            logs = stdout.decode(errors='replace')
+            try:
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            process.stdout.read(4096), timeout=30
+                        )
+                    except asyncio.TimeoutError:
+                        elapsed = time.time() - test_start
+                        if elapsed > test_timeout:
+                            logger.error("Test execution timed out after %.0fs", elapsed)
+                            process.kill()
+                            await process.wait()
+                            collected = b"".join(output_chunks).decode(errors="replace")
+                            return {
+                                "success": False,
+                                "logs": f"Test execution timed out after 5 minutes\n\n{collected[-3000:]}",
+                                "duration": time.time() - start_time,
+                            }
+                        logger.info("Test still running after %.0fs (no output for 30s)...", elapsed)
+                        continue
+
+                    if not chunk:
+                        break  # EOF — process finished
+
+                    output_chunks.append(chunk)
+                    text = chunk.decode(errors="replace")
+
+                    # Detect testmanagerd connection issues
+                    if not stuck_warned and (
+                        "Waiting for" in text
+                        or "DTServiceHub" in text
+                        or "testmanagerd" in text
+                    ):
+                        logger.warning(
+                            "xcodebuild may be stuck connecting to testmanagerd: %s",
+                            text.strip()[:200],
+                        )
+                        stuck_warned = True
+
+            except Exception as read_err:
+                logger.error("Error reading xcodebuild output: %s", read_err)
+
+            await process.wait()
+            logs = b"".join(output_chunks).decode(errors="replace")
             duration = time.time() - start_time
 
-            success = '** TEST SUCCEEDED **' in logs
-            if '** TEST FAILED **' in logs:
+            success = '** TEST SUCCEEDED **' in logs or '** TEST EXECUTE SUCCEEDED **' in logs
+            if '** TEST FAILED **' in logs or '** TEST EXECUTE FAILED **' in logs:
                 success = False
 
             logger.info(f"Test {'PASSED' if success else 'FAILED'} in {duration:.1f}s")
@@ -490,5 +576,5 @@ class TestRunner:
     @staticmethod
     def _extract_test_method(test_code: str) -> Optional[str]:
         """Extract the test method name from Swift code."""
-        match = re.search(r'func (test\w+)\(\)', test_code)
+        match = re.search(r'func (test\w+)\(\)\s*(?:async\s+)?(?:throws\s*)?', test_code)
         return match.group(1) if match else None

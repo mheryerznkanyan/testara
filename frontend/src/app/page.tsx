@@ -94,7 +94,9 @@ export default function TestGenerator() {
     deviceUdid: '',
     iosVersion: '17.0',
     appName: 'YourApp',
+    bundleId: '',
   })
+  const [appiumEnabled, setAppiumEnabled] = useState(false)
 
   const resultsRef = useRef<HTMLDivElement>(null)
   const executionRef = useRef<HTMLDivElement>(null)
@@ -110,12 +112,17 @@ export default function TestGenerator() {
         deviceUdid: p.deviceUdid || '',
         iosVersion: p.iosVersion || '17.0',
         appName: p.appName || 'YourApp',
+        bundleId: p.bundleId || '',
       })
     } catch (_) {}
   }
 
   useEffect(() => {
     loadSettings()
+    fetch('http://localhost:8000/health')
+      .then(r => r.json())
+      .then(data => setAppiumEnabled(!!data.appium_enabled))
+      .catch(() => {})
     const onVisibility = () => { if (!document.hidden) loadSettings() }
     const onStorage = (e: StorageEvent) => { if (e.key === 'testara_settings') loadSettings() }
     document.addEventListener('visibilitychange', onVisibility)
@@ -143,7 +150,14 @@ export default function TestGenerator() {
       const res = await fetch('http://localhost:8000/generate-test-with-rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ test_description: description, test_type: 'ui', include_comments: true }),
+        body: JSON.stringify({
+          test_description: description,
+          test_type: 'ui',
+          include_comments: true,
+          discovery_enabled: appiumEnabled && !!settings.bundleId && !!settings.deviceUdid,
+          bundle_id: settings.bundleId || undefined,
+          device_udid: settings.deviceUdid || undefined,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => null)
@@ -238,6 +252,15 @@ export default function TestGenerator() {
                 <span className="flex items-center gap-1 text-emerald-400">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
                   Physical device
+                </span>
+              </>
+            )}
+            {appiumEnabled && settings.bundleId && settings.deviceUdid && (
+              <>
+                <span className="opacity-30">·</span>
+                <span className="flex items-center gap-1 text-blue-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+                  Appium discovery
                 </span>
               </>
             )}

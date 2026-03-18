@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 import xml.etree.ElementTree as ET
 
 INTERACTIVE_TYPES = {
@@ -73,6 +73,62 @@ class AccessibilitySnapshot:
             if e.value and e.value != e.label:
                 parts[0] += f"  value={e.value!r}"
             lines.append(parts[0])
+        return "\n".join(lines)
+
+
+@dataclass
+class ScreenCapture:
+    """A single screen's accessibility snapshot with metadata."""
+    screen_name: str
+    snapshot: AccessibilitySnapshot
+    is_target: bool = False
+
+
+@dataclass
+class MultiScreenSnapshot:
+    """Accessibility snapshots from multiple screens along a navigation path."""
+    screens: List[ScreenCapture] = field(default_factory=list)
+    navigation_path: List[str] = field(default_factory=list)
+    bundle_id: str = ""
+    device_udid: str = ""
+
+    @property
+    def target_snapshot(self) -> Optional[AccessibilitySnapshot]:
+        for sc in self.screens:
+            if sc.is_target:
+                return sc.snapshot
+        return self.screens[-1].snapshot if self.screens else None
+
+    def interactive_elements(self) -> List[ElementInfo]:
+        target = self.target_snapshot
+        return target.interactive_elements() if target else []
+
+    def to_context_string(self) -> str:
+        """Format all screens for LLM prompt, with navigation order and target marked."""
+        if not self.screens:
+            return "RUNTIME ACCESSIBILITY TREE: No screens captured."
+
+        lines = [
+            "RUNTIME ACCESSIBILITY TREE (live from running app — highest confidence):",
+            "Rule: use 'name' values directly in XCUITest — app.buttons[\"name\"], app.textFields[\"name\"]",
+            f"Navigation path: {' -> '.join(self.navigation_path)}" if self.navigation_path else "",
+            "",
+        ]
+
+        for sc in self.screens:
+            marker = " [TARGET SCREEN]" if sc.is_target else ""
+            lines.append(f"--- Screen: {sc.screen_name}{marker} ---")
+            interactive = sc.snapshot.interactive_elements()
+            if not interactive:
+                lines.append("  (no interactive elements with identifiers)")
+            else:
+                for e in interactive:
+                    parts = f"  [{e.short_type:<16}]  name={e.name!r:<35} label={e.label!r}"
+                    if e.value and e.value != e.label:
+                        parts += f"  value={e.value!r}"
+                    lines.append(parts)
+            lines.append("")
+
         return "\n".join(lines)
 
 
