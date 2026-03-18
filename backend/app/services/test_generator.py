@@ -1,6 +1,6 @@
 """Test Generator service - LLM-powered Swift test generation"""
 import logging
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from tenacity import (
@@ -11,7 +11,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.core.prompts import XCTEST_SYSTEM_PROMPT, XCUITEST_SYSTEM_PROMPT
+from app.core.prompts import RUNTIME_TREE_INSTRUCTIONS, XCTEST_SYSTEM_PROMPT, XCUITEST_SYSTEM_PROMPT
+
+if TYPE_CHECKING:
+    from app.utils.accessibility_tree_parser import AccessibilitySnapshot, MultiScreenSnapshot
 from app.schemas.test_schemas import TestGenerationRequest, TestGenerationResponse
 from app.utils.swift_utils import extract_class_name, strip_code_fences
 from app.utils.validators import (
@@ -50,11 +53,21 @@ class TestGenerator:
         """Invoke the LLM with up to 3 retries on transient errors."""
         return self._llm.invoke(messages)
 
-    def run(self, request: TestGenerationRequest) -> TestGenerationResponse:
+    def _build_runtime_context_section(self, snapshot) -> str:
+        """Build the runtime tree context section for the user message."""
+        if snapshot is None:
+            return ""
+        tree_str = snapshot.to_context_string()
+        if not tree_str or "No interactive elements" in tree_str:
+            return ""
+        return f"{RUNTIME_TREE_INSTRUCTIONS}\n\n{tree_str}\n"
+
+    def run(self, request: TestGenerationRequest, accessibility_snapshot=None) -> TestGenerationResponse:
         """Generate a Swift XCTest/XCUITest based on the request.
 
         Args:
             request: TestGenerationRequest containing test description and context.
+            accessibility_snapshot: Optional AccessibilitySnapshot from live Appium discovery.
 
         Returns:
             TestGenerationResponse with generated Swift code.
@@ -67,15 +80,39 @@ class TestGenerator:
             raise ValueError("test_type must be 'unit' or 'ui'")
 
         system_prompt = XCTEST_SYSTEM_PROMPT if test_type == "unit" else XCUITEST_SYSTEM_PROMPT
+
+        # Inject launch environment into setup template if configured
+        from app.core.config import settings
+        if settings.launch_environment and test_type == "ui":
+            env_lines = []
+            for pair in settings.launch_environment.split(","):
+                pair = pair.strip()
+                if "=" in pair:
+                    key, value = pair.split("=", 1)
+                    env_lines.append(f'    app.launchEnvironment["{key.strip()}"] = "{value.strip()}"')
+            if env_lines:
+                env_block = "\n".join(env_lines)
+                system_prompt = system_prompt.replace(
+                    '    app.launch()\n}',
+                    f'{env_block}\n    app.launch()\n}}',
+                )
         default_class_name = "GeneratedUnitTests" if test_type == "unit" else "GeneratedUITests"
 
         context_section = build_context_section(request.app_context)
         class_name_section = build_class_name_section(request.class_name)
+        runtime_section = self._build_runtime_context_section(accessibility_snapshot)
+
+        if accessibility_snapshot and accessibility_snapshot.interactive_elements():
+            logger.info(
+                "Using runtime accessibility tree: %d interactive elements",
+                len(accessibility_snapshot.interactive_elements()),
+            )
 
         test_label = "XCTest unit test" if test_type == "unit" else "XCUITest UI test"
         user_message = (
             f"Generate a Swift {test_label} for the following:\n\n"
             f"Test Description: {request.test_description}\n\n"
+            f"{runtime_section}"
             f"{context_section}\n\n"
             f"{class_name_section}\n\n"
             f"Include comments: {request.include_comments}\n\n"

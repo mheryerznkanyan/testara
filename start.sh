@@ -2,6 +2,7 @@
 set -e
 
 cd "$(dirname "$0")"
+PROJECT_DIR="$(pwd)"
 
 # Colors
 RED='\033[0;31m'
@@ -29,7 +30,7 @@ fi
 source "$VENV_DIR/bin/activate"
 
 # Install rich if not present (for banner)
-pip list 2>/dev/null | grep -q "^rich " || pip install rich --quiet 2>/dev/null
+"$PROJECT_DIR/$VENV_DIR/bin/pip" list 2>/dev/null | grep -q "^rich " || "$PROJECT_DIR/$VENV_DIR/bin/pip" install rich --quiet 2>/dev/null
 
 # Print Testara banner
 $PYTHON -c "from backend.app.utils.terminal_ui import print_banner; print_banner()"
@@ -84,13 +85,23 @@ echo -e "\n${CYAN}${BOLD}Installing Dependencies${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 echo -e "${BLUE}►${NC} Installing backend dependencies..."
-pip install -e . --quiet
-pip install pbxproj python-dotenv rich --quiet
+"$PROJECT_DIR/$VENV_DIR/bin/pip" install -e . --quiet
+"$PROJECT_DIR/$VENV_DIR/bin/pip" install pbxproj python-dotenv rich --quiet
 echo -e "${GREEN}✓${NC} Backend dependencies installed"
 
 echo -e "${BLUE}►${NC} Installing frontend dependencies..."
 cd frontend && npm install --silent && cd ..
 echo -e "${GREEN}✓${NC} Frontend dependencies installed"
+
+# Handle --reindex flag: force clear RAG store
+if [[ "$*" == *"--reindex"* ]]; then
+    echo -e "\n${CYAN}${BOLD}Reindexing Project${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}►${NC} Clearing old RAG index..."
+    rm -rf "$PROJECT_DIR/rag_store"
+    rm -f "$PROJECT_DIR/.testara_setup_done"
+    echo -e "${GREEN}✓${NC} RAG store cleared"
+fi
 
 # Setup Xcode project (runs on first launch or when PROJECT_ROOT changes)
 SETUP_NEEDED=false
@@ -147,7 +158,7 @@ echo -e "${CYAN}━━━━━━━━━━━━━━━━━${NC}"
 
 echo -e "${BLUE}►${NC} Starting backend on port 8000..."
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+"$PROJECT_DIR/$VENV_DIR/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 cd ..
 sleep 2

@@ -15,6 +15,7 @@ interface Settings {
   deviceUdid: string
   iosVersion: string
   appName: string
+  bundleId: string
 }
 
 export default function SettingsPage() {
@@ -23,6 +24,7 @@ export default function SettingsPage() {
     deviceUdid: '',
     iosVersion: '17.0',
     appName: 'YourApp',
+    bundleId: '',
   })
   
   const [availableDevices, setAvailableDevices] = useState<SimulatorDevice[]>([])
@@ -39,6 +41,7 @@ export default function SettingsPage() {
         deviceUdid: parsed.deviceUdid || '',
         iosVersion: parsed.iosVersion || '17.0',
         appName: parsed.appName || 'YourApp',
+        bundleId: parsed.bundleId || '',
       })
     }
 
@@ -198,6 +201,28 @@ export default function SettingsPage() {
             />
             <p className="text-xs text-gray-500 mt-2">
               Name of the app being tested (used in test context)
+            </p>
+          </motion.div>
+
+          {/* Bundle ID */}
+          <motion.div
+            className="glass p-6 rounded-xl"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35, duration: 0.6 }}
+          >
+            <label className="block text-sm font-semibold mb-3">
+              Bundle ID
+            </label>
+            <input
+              type="text"
+              value={settings.bundleId}
+              onChange={(e) => setSettings({ ...settings, bundleId: e.target.value })}
+              placeholder="com.example.MyApp"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Required for Appium live discovery (e.g. com.example.MyApp)
             </p>
           </motion.div>
 
