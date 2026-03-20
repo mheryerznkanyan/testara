@@ -50,6 +50,24 @@ Input: "test login"
 Output: "Launch the application and verify the login screen appears. Enter valid credentials into the respective text fields. Tap the login button and verify successful navigation to the main screen."
 """
 
+RETRY_CONTEXT_TEMPLATE = """
+PREVIOUS ATTEMPT FAILED (attempt {attempt} of {max_attempts}):
+Error: {error}
+
+Traceback:
+{logs}
+
+Previous test code that failed:
+```python
+{previous_code}
+```
+
+Fix the test to resolve this error. Do NOT repeat the same mistake. Common fixes:
+- If element not found: try a different locator strategy or accessibility ID
+- If timeout: increase wait time or add missing navigation steps before the element
+- If assertion failed: verify the expected value matches the app actual state
+"""
+
 APPIUM_PYTEST_SYSTEM_PROMPT = """You are an expert mobile test automation engineer specializing in Appium + Python for iOS testing.
 
 Your task is to generate a single Python test function that uses an Appium driver injected as a parameter.

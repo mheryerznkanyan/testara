@@ -36,6 +36,27 @@ interface ExecutionResult {
   error?: string
 }
 
+interface AttemptSummary {
+  attempt: number
+  test_code: string
+  success: boolean
+  error?: string
+  duration: number
+}
+
+interface AutoRunResult {
+  success: boolean
+  attempts: number
+  test_id: string
+  test_code: string
+  logs: string
+  duration: number
+  video_url: string | null
+  error?: string
+  screenshot?: string
+  history: AttemptSummary[]
+}
+
 type ResultTab = 'code' | 'quality' | 'enrichment'
 
 /* ─────────────────────────── helpers ───────────────────────── */
@@ -88,6 +109,13 @@ export default function TestGenerator() {
 
   const [executionLoading, setExecutionLoading] = useState(false)
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null)
+
+  const [autoRunLoading, setAutoRunLoading] = useState(false)
+  const [autoRunResult, setAutoRunResult] = useState<AutoRunResult | null>(null)
+  const [autoRunAttempt, setAutoRunAttempt] = useState<{ current: number; max: number } | null>(null)
+  const [historyExpanded, setHistoryExpanded] = useState(false)
+
+  const autoRunRef = useRef<HTMLDivElement>(null)
 
   const [settings, setSettings] = useState({
     deviceName: 'iPhone 15 Pro',
@@ -206,6 +234,117 @@ export default function TestGenerator() {
     }
   }
 
+  /* ── generate & run (SSE) ── */
+  const handleGenerateAndRun = () => {
+    if (!description.trim()) { setError('Please provide a test description'); return }
+    setAutoRunLoading(true)
+    setAutoRunAttempt({ current: 1, max: 3 })
+    setError(null)
+    setAutoRunResult(null)
+    setExecutionResult(null)
+
+    const params = new URLSearchParams({
+      test_description: description,
+      bundle_id: '',
+      device_udid: settings.deviceUdid || '',
+      max_attempts: '3',
+    })
+
+    const es = new EventSource(`/api/generate-and-run/stream?${params}`)
+
+    es.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+
+      switch (data.type) {
+        case 'attempt_start':
+          setAutoRunAttempt({ current: data.attempt, max: data.max })
+          break
+
+        case 'success':
+          setAutoRunResult({
+            success: true,
+            attempts: data.attempt,
+            test_id: data.test_id || '',
+            test_code: data.test_code || '',
+            logs: data.logs || '',
+            duration: data.duration || 0,
+            video_url: data.video_url || null,
+            error: undefined,
+            history: data.history || [],
+          })
+          setAutoRunLoading(false)
+          setAutoRunAttempt(null)
+          setHistoryExpanded(false)
+          scrollTo(autoRunRef)
+          es.close()
+          break
+
+        case 'assertion_failure':
+          setAutoRunResult({
+            success: false,
+            attempts: data.attempt,
+            test_id: '',
+            test_code: data.test_code || '',
+            logs: data.logs || '',
+            duration: 0,
+            video_url: null,
+            error: data.error,
+            history: data.history || [],
+          })
+          setAutoRunLoading(false)
+          setAutoRunAttempt(null)
+          setHistoryExpanded(false)
+          scrollTo(autoRunRef)
+          es.close()
+          break
+
+        case 'exhausted':
+          setAutoRunResult({
+            success: false,
+            attempts: data.attempts,
+            test_id: '',
+            test_code: data.test_code || '',
+            logs: '',
+            duration: 0,
+            video_url: null,
+            error: data.error,
+            history: data.history || [],
+          })
+          setAutoRunLoading(false)
+          setAutoRunAttempt(null)
+          setHistoryExpanded(false)
+          scrollTo(autoRunRef)
+          es.close()
+          break
+
+        case 'fatal_error':
+          setAutoRunResult({
+            success: false,
+            attempts: 0,
+            test_id: '',
+            test_code: '',
+            logs: '',
+            duration: 0,
+            video_url: null,
+            error: data.error,
+            history: [],
+          })
+          setError(data.error)
+          setAutoRunLoading(false)
+          setAutoRunAttempt(null)
+          es.close()
+          break
+      }
+    }
+
+    es.onerror = () => {
+      setError('Connection to server lost')
+      setAutoRunLoading(false)
+      setAutoRunAttempt(null)
+      es.close()
+    }
+  }
+
   /* ── available tabs ── */
   const tabs: { id: ResultTab; label: string; available: boolean }[] = [
     { id: 'code', label: 'Code', available: true },
@@ -306,26 +445,42 @@ export default function TestGenerator() {
             </div>
           </div>
 
-          {/* generate button */}
-          <motion.button
-            onClick={handleGenerate}
-            disabled={loading || !description.trim()}
-            whileHover={{ scale: loading || !description.trim() ? 1 : 1.015 }}
-            whileTap={{ scale: loading || !description.trim() ? 1 : 0.985 }}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-500 hover:bg-blue-400 disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed text-white text-sm font-semibold py-3 transition-all duration-200 shadow-lg shadow-blue-500/20 disabled:shadow-none"
-          >
-            {loading ? (
-              <><Spinner />Generating…</>
-            ) : (
-              <>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Generate Test
-                <kbd className="ml-1 hidden sm:inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-white/10 text-white/40 font-mono">⌘↵</kbd>
-              </>
-            )}
-          </motion.button>
+          {/* generate buttons row */}
+          <div className="flex gap-2">
+            <motion.button
+              onClick={handleGenerate}
+              disabled={loading || autoRunLoading || !description.trim()}
+              whileHover={{ scale: loading || autoRunLoading || !description.trim() ? 1 : 1.015 }}
+              whileTap={{ scale: loading || autoRunLoading || !description.trim() ? 1 : 0.985 }}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-blue-500 hover:bg-blue-400 disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed text-white text-sm font-semibold py-3 transition-all duration-200 shadow-lg shadow-blue-500/20 disabled:shadow-none"
+            >
+              {loading ? (
+                <><Spinner />Generating…</>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Generate Test
+                  <kbd className="ml-1 hidden sm:inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-white/10 text-white/40 font-mono">⌘↵</kbd>
+                </>
+              )}
+            </motion.button>
+
+            <motion.button
+              onClick={handleGenerateAndRun}
+              disabled={autoRunLoading || loading || !description.trim()}
+              whileHover={{ scale: autoRunLoading || loading || !description.trim() ? 1 : 1.015 }}
+              whileTap={{ scale: autoRunLoading || loading || !description.trim() ? 1 : 0.985 }}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed text-white text-sm font-semibold py-3 transition-all duration-200 shadow-lg shadow-blue-600/20 disabled:shadow-none"
+            >
+              {autoRunLoading ? (
+                <><Spinner />{autoRunAttempt ? `Running (${autoRunAttempt.current}/${autoRunAttempt.max})…` : 'Generating & Running…'}</>
+              ) : (
+                <>⚡ Generate &amp; Run</>
+              )}
+            </motion.button>
+          </div>
 
           {/* error */}
           <AnimatePresence>
@@ -672,6 +827,159 @@ export default function TestGenerator() {
                   </svg>
                   Run Again
                 </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ══════════════ SECTION 4 — Auto-Run Results ══════════════ */}
+        <AnimatePresence>
+          {(autoRunResult || autoRunLoading) && (
+            <motion.div
+              ref={autoRunRef}
+              key="autorun-section"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.45 }}
+              className="glass rounded-2xl overflow-hidden"
+            >
+              {/* header */}
+              <div className="px-6 pt-5 pb-4 flex items-center gap-3 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/15 text-blue-400 text-xs font-bold">⚡</span>
+                  <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Generate &amp; Run</span>
+                </div>
+                {autoRunResult && (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                    autoRunResult.success
+                      ? 'bg-emerald-500/15 text-emerald-400'
+                      : 'bg-red-500/15 text-red-400'
+                  }`}>
+                    {autoRunResult.success ? (
+                      <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>Passed</>
+                    ) : (
+                      <><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>Failed</>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              <div className="p-6 space-y-5">
+                {/* skeleton while loading */}
+                {autoRunLoading && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Spinner />
+                      <span>{autoRunAttempt ? `Running attempt ${autoRunAttempt.current} of ${autoRunAttempt.max}…` : 'Generating & running…'}</span>
+                    </div>
+                    {[60, 80, 45].map((w, i) => (
+                      <div key={i} className="h-3 rounded-full bg-white/[0.05] animate-pulse" style={{ width: `${w}%` }} />
+                    ))}
+                  </div>
+                )}
+
+                {autoRunResult && (
+                  <>
+                    {/* meta */}
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { label: 'Attempts', value: `${autoRunResult.attempts}` },
+                        { label: 'Duration', value: `${autoRunResult.duration.toFixed(2)}s` },
+                        { label: 'Test ID', value: autoRunResult.test_id, mono: true },
+                      ].map(({ label, value, mono }) => (
+                        <div key={label} className="bg-white/[0.03] rounded-xl px-4 py-3 border border-white/[0.04]">
+                          <p className="text-xs text-muted-foreground/60 mb-0.5">{label}</p>
+                          <p className={`text-sm text-white truncate ${mono ? 'font-mono text-xs' : 'font-medium'}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* error banner */}
+                    {autoRunResult.error && (
+                      <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
+                        <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {autoRunResult.error}
+                      </div>
+                    )}
+
+                    {/* attempt history */}
+                    {autoRunResult.history.length > 0 && (
+                      <div>
+                        <button
+                          onClick={() => setHistoryExpanded(v => !v)}
+                          className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground/60 hover:text-white transition-colors select-none mb-2"
+                        >
+                          <svg className={`w-3.5 h-3.5 transition-transform ${historyExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          Attempt history ({autoRunResult.history.length})
+                        </button>
+                        <AnimatePresence>
+                          {historyExpanded && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="overflow-hidden space-y-2"
+                            >
+                              {autoRunResult.history.map((a) => (
+                                <div
+                                  key={a.attempt}
+                                  className={`flex items-start gap-3 rounded-xl px-4 py-3 border text-sm ${
+                                    a.success
+                                      ? 'bg-emerald-500/[0.06] border-emerald-500/20 text-emerald-400'
+                                      : 'bg-red-500/[0.06] border-red-500/20 text-red-400'
+                                  }`}
+                                >
+                                  <span className="text-base leading-none mt-0.5">{a.success ? '✅' : '❌'}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-semibold">Attempt {a.attempt}</span>
+                                    {a.success ? (
+                                      <span className="text-white/50 ml-2 text-xs">Passed</span>
+                                    ) : a.error ? (
+                                      <span className="text-white/50 ml-2 text-xs truncate block">{a.error}</span>
+                                    ) : null}
+                                  </div>
+                                  <span className="text-xs text-muted-foreground/50 shrink-0">{a.duration.toFixed(1)}s</span>
+                                </div>
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    )}
+
+                    {/* logs */}
+                    {autoRunResult.logs && (
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs font-semibold text-muted-foreground/60 hover:text-white transition-colors flex items-center gap-1.5 select-none">
+                          <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          View logs
+                        </summary>
+                        <pre className="mt-3 bg-black/40 rounded-xl px-4 py-3 text-xs text-white/50 overflow-x-auto leading-relaxed max-h-60 overflow-y-auto font-mono ring-1 ring-white/[0.04]">
+                          {autoRunResult.logs}
+                        </pre>
+                      </details>
+                    )}
+
+                    {/* run again */}
+                    <button
+                      onClick={handleGenerateAndRun}
+                      disabled={autoRunLoading}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.09] text-sm font-semibold py-3 text-white/70 hover:text-white transition-all duration-200 disabled:cursor-not-allowed disabled:text-white/20"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Run Again
+                    </button>
+                  </>
+                )}
               </div>
             </motion.div>
           )}

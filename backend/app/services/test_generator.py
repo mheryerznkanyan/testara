@@ -2,7 +2,7 @@
 import ast
 import logging
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from tenacity import (
@@ -72,7 +72,7 @@ class TestGenerator:
             return ""
         return f"{RUNTIME_TREE_INSTRUCTIONS}\n\n{tree_str}\n"
 
-    def run(self, request: TestGenerationRequest, accessibility_snapshot=None) -> TestGenerationResponse:
+    def run(self, request: TestGenerationRequest, accessibility_snapshot=None, retry_context: Optional[str] = None) -> TestGenerationResponse:
         """Generate an Appium Python test function from the request."""
         context_section = build_context_section(request.app_context)
         class_name_section = build_class_name_section(request.class_name)
@@ -84,6 +84,10 @@ class TestGenerator:
                 len(accessibility_snapshot.interactive_elements()),
             )
 
+        logger.info("Attempt with retry context: %s", retry_context[:100] if retry_context else "none")
+
+        retry_section = f"\n{retry_context}\n" if retry_context else ""
+
         user_message = (
             f"Generate an Appium Python test function for the following:\n\n"
             f"Test Description: {request.test_description}\n\n"
@@ -91,6 +95,7 @@ class TestGenerator:
             f"{context_section}\n\n"
             f"{class_name_section}\n\n"
             f"Include comments: {request.include_comments}\n\n"
+            f"{retry_section}"
             "Output ONLY Python code."
         )
 

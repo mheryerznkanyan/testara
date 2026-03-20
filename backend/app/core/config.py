@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Batch endpoint: max requests per call to prevent runaway LLM usage
     batch_max_size: int = 20
 
+    # Auto-retry: max generation+execution attempts per /generate-and-run call
+    auto_retry_max_attempts: int = 3
+
     class Config:
         env_file = str(_ENV_FILE)
         extra = "ignore"
