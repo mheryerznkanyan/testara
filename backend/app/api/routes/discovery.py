@@ -47,14 +47,22 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
             detail="Appium discovery not enabled. Set APPIUM_ENABLED=true in .env",
         )
 
-    try:
-        snapshot = await appium_service.discover(
-            bundle_id=body.bundle_id,
-            device_udid=body.device_udid,
-            screen_hints=body.screen_hints,
+    # Prevent Appium from connecting while a test is running on the simulator
+    lock = request.app.state.test_execution_lock
+    if lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="A test is currently executing on the simulator. Discovery blocked to avoid interference.",
         )
 
-        interactive = snapshot.interactive_elements()
+    try:
+        multi_snapshot = await appium_service.discover(
+            bundle_id=body.bundle_id,
+            device_udid=body.device_udid,
+        )
+
+        interactive = multi_snapshot.interactive_elements()
+        target = multi_snapshot.target_snapshot
 
         # Total element count across all screens
         total_elements = sum(len(s.elements) for s in snapshot.screens) if hasattr(snapshot, 'screens') else len(getattr(snapshot, 'elements', []))
@@ -63,7 +71,9 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
         if not hasattr(request.app.state, "snapshots"):
             request.app.state.snapshots = {}
         snapshot_key = f"{body.bundle_id}:{body.device_udid}"
-        request.app.state.snapshots[snapshot_key] = snapshot
+        request.app.state.snapshots[snapshot_key] = multi_snapshot
+
+        total_elements = sum(len(sc.snapshot.elements) for sc in multi_snapshot.screens)
 
         # Save to disk for reuse across restarts
         from app.core.config import settings
@@ -88,7 +98,7 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
                 )
                 for e in interactive[:100]  # cap at 100 for response size
             ],
-            has_screenshot=bool(snapshot.screenshot_b64),
+            has_screenshot=bool(target and target.screenshot_b64),
         )
 
     except Exception as e:

@@ -31,124 +31,178 @@ class AppContextExtractor:
             logger.error(f"Failed to extract app context: {e}")
             return self._get_template()
     
+    # Chunk kinds that represent user-facing screens
+    _SCREEN_KINDS = {"swiftui_view", "screen_card", "uikit_viewcontroller"}
+
     def _extract_screens(self) -> List[str]:
-        """Extract screen/view names from RAG index"""
+        """Extract screen/view names from RAG index.
+
+        Accepts any chunk whose ``kind`` is a screen type (SwiftUI view,
+        UIKit view-controller, or screen-card).  No name-based filtering
+        so that apps using *Screen, *Page, *Content, or any other naming
+        convention are discovered automatically.
+        """
         try:
-            # Query RAG for screens - use broader query
-            result = self.rag_service.query("View struct SwiftUI", k=30)
-            
-            logger.info(f"Screen query returned {len(result.get('code_snippets', []))} snippets")
-            
-            screens = []
+            result = self.rag_service.query(
+                "View Screen Page body NavigationStack TabView", k=30
+            )
+
+            logger.info(
+                "Screen query returned %d snippets",
+                len(result.get("code_snippets", [])),
+            )
+
+            screens: set[str] = set()
+
             for snippet in result.get("code_snippets", []):
-                # Get screen name from metadata (more reliable)
                 screen_name = snippet.get("screen")
                 kind = snippet.get("kind")
-                
-                logger.debug(f"Snippet: kind={kind}, screen={screen_name}")
-                
-                if screen_name:
-                    # Filter out non-view types
-                    if screen_name not in screens and (
-                        "View" in screen_name or 
-                        kind == "swiftui_view"
-                    ):
-                        screens.append(screen_name)
-                        logger.debug(f"Added screen: {screen_name}")
-            
-            logger.info(f"Extracted {len(screens)} screens")
+
+                if screen_name and kind in self._SCREEN_KINDS:
+                    screens.add(screen_name)
+
+            # Also pull from the top-level "screens" list returned by RAG
+            for screen in result.get("screens", []):
+                if screen:
+                    screens.add(screen)
+
+            logger.info("Extracted %d screens", len(screens))
             return sorted(screens)
-            
+
         except Exception as e:
-            logger.warning(f"Failed to extract screens: {e}")
+            logger.warning("Failed to extract screens: %s", e)
             return []
     
+    # Standard Apple framework navigation constructs to detect.
+    # Each entry: (search_token, dedup_key, label)
+    _NAV_PATTERNS = [
+        ("NavigationStack",         "NavStack",   "NavigationStack (push navigation)"),
+        ("NavigationLink",          "NavStack",   "NavigationStack (push navigation)"),
+        ("TabView",                 "TabView",    "TabView (tab-based navigation)"),
+        (".sheet(",                 "Sheet",      "Modal sheets"),
+        (".fullScreenCover(",       "FSCover",    "Full-screen covers"),
+        ("UINavigationController",  "UINav",      "UINavigationController (UIKit push)"),
+        ("UITabBarController",      "UITab",      "UITabBarController (UIKit tabs)"),
+        ("performSegue(",           "Segue",      "Storyboard segues"),
+    ]
+
     def _extract_navigation(self) -> Dict:
-        """Extract navigation patterns"""
+        """Extract navigation patterns from indexed code.
+
+        Uses only standard Apple framework constructs — no app-specific
+        screen names are referenced.  Runs two queries: one for navigation
+        constructs and one for the @main entry point (which may be chunked
+        as a plain struct rather than a view).
+        """
+        import re
+
         try:
-            result = self.rag_service.query("TabView NavigationStack ContentView", k=15)
-            
-            nav_info = {
+            nav_info: Dict = {
                 "patterns": [],
                 "entry_screen": None,
-                "tabs": []
+                "tabs": [],
             }
-            
-            for snippet in result.get("code_snippets", []):
+            seen: set[str] = set()
+
+            # Two queries: navigation constructs + app entry point
+            nav_result = self.rag_service.query(
+                "TabView NavigationStack sheet tabItem body", k=15
+            )
+            entry_result = self.rag_service.query(
+                "@main App WindowGroup Scene body", k=5
+            )
+
+            all_snippets = (
+                nav_result.get("code_snippets", [])
+                + entry_result.get("code_snippets", [])
+            )
+
+            for snippet in all_snippets:
                 content = snippet.get("content", "")
                 screen_name = snippet.get("screen", "")
-                
-                # Detect patterns
-                if "NavigationLink" in content or "NavigationStack" in content:
-                    if "NavigationStack" not in [p.split()[0] for p in nav_info["patterns"]]:
-                        nav_info["patterns"].append("NavigationStack (push navigation)")
-                if "TabView" in content:
-                    if "TabView" not in [p.split()[0] for p in nav_info["patterns"]]:
-                        nav_info["patterns"].append("TabView (tab-based navigation)")
-                if "sheet" in content or ".sheet(" in content:
-                    if "Modal" not in [p.split()[0] for p in nav_info["patterns"]]:
-                        nav_info["patterns"].append("Modal sheets")
-                
-                # Extract tab labels
-                if "tabItem" in content and "Label(" in content:
-                    lines = content.split("\n")
-                    for line in lines:
-                        if 'Label("' in line and "tabItem" in content:
-                            # Extract: Label("Items", ...) → "Items"
-                            parts = line.split('Label("')
-                            if len(parts) > 1:
-                                tab_name = parts[1].split('"')[0]
-                                if tab_name not in nav_info["tabs"]:
-                                    nav_info["tabs"].append(tab_name)
-                
-                # Find entry point from ContentView or similar
-                if "ContentView" in screen_name or "App" in screen_name:
-                    # Look for LoginView or initial view
-                    if "LoginView()" in content:
-                        nav_info["entry_screen"] = "LoginView"
-                    elif "MainTabView()" in content:
-                        nav_info["entry_screen"] = "MainTabView"
-            
+
+                # Detect standard navigation constructs
+                for token, key, label in self._NAV_PATTERNS:
+                    if token in content and key not in seen:
+                        nav_info["patterns"].append(label)
+                        seen.add(key)
+
+                # Extract tab names from tabItem blocks.
+                # Handles both Label("Name", ...) and Image(systemName: "icon")
+                if "tabItem" in content:
+                    # Try Label("Name", ...) first
+                    for m in re.finditer(r'Label\(\s*"([^"]+)"', content):
+                        tab_name = m.group(1)
+                        if tab_name not in nav_info["tabs"]:
+                            nav_info["tabs"].append(tab_name)
+
+                    # Fallback: extract the screen/view name before .tabItem
+                    # e.g.  FeedScreen(...)\n  .tabItem {
+                    if not nav_info["tabs"]:
+                        for m in re.finditer(
+                            r'(\w+(?:Screen|View|Tab|Page))\s*\(.*?\).*?\.tabItem',
+                            content, re.DOTALL,
+                        ):
+                            tab_name = m.group(1)
+                            if tab_name not in nav_info["tabs"]:
+                                nav_info["tabs"].append(tab_name)
+
+                # Infer entry screen from @main App struct or WindowGroup
+                if not nav_info["entry_screen"]:
+                    if "@main" in content or "WindowGroup" in content:
+                        nav_info["entry_screen"] = screen_name or None
+
             return nav_info
-            
+
         except Exception as e:
-            logger.warning(f"Failed to extract navigation: {e}")
+            logger.warning("Failed to extract navigation: %s", e)
             return {"patterns": [], "entry_screen": None, "tabs": []}
     
     def _extract_ui_elements(self) -> List[str]:
-        """Extract common UI elements and accessibility IDs"""
+        """Extract accessibility identifiers from the RAG index.
+
+        Queries for accessibility_map chunks which list IDs line-by-line.
+        The query is generic — no app-specific keywords.
+        """
         try:
-            # Query for accessibility_map kind - this has all IDs listed!
-            # Use broader query to get all accessibility maps
-            result = self.rag_service.query("ACCESSIBILITY_IDS login profile item", k=25)
-            
-            logger.info(f"UI elements query returned {len(result.get('code_snippets', []))} snippets")
-            
-            elements = []
+            result = self.rag_service.query(
+                "ACCESSIBILITY_IDS accessibilityIdentifier", k=25
+            )
+
+            logger.info(
+                "UI elements query returned %d snippets",
+                len(result.get("code_snippets", [])),
+            )
+
+            elements: list[str] = []
             for snippet in result.get("code_snippets", []):
                 kind = snippet.get("kind", "")
                 content = snippet.get("content", "")
-                
-                logger.debug(f"UI snippet: kind={kind}, content_preview={content[:50]}")
-                
-                # accessibility_map kind has IDs listed line by line
+
                 if kind == "accessibility_map":
-                    logger.info(f"Found accessibility_map, extracting IDs...")
-                    lines = content.split("\n")
-                    for line in lines:
+                    for line in content.splitlines():
                         line = line.strip()
-                        # Skip header lines
-                        if line and not line.startswith("ACCESSIBILITY_IDS") and not line.startswith("path:"):
-                            # This is an ID!
-                            if line not in elements:
-                                elements.append(f"`{line}`")
-                                logger.debug(f"Added ID: {line}")
-            
-            logger.info(f"Extracted {len(elements)} accessibility IDs")
-            return elements[:30]  # Top 30 IDs
-            
+                        # Skip header/metadata lines
+                        if (
+                            line
+                            and not line.startswith("ACCESSIBILITY_IDS")
+                            and not line.startswith("path:")
+                        ):
+                            formatted = f"`{line}`"
+                            if formatted not in elements:
+                                elements.append(formatted)
+
+            # Also collect IDs surfaced via RAG metadata
+            for aid in result.get("accessibility_ids", []):
+                formatted = f"`{aid}`"
+                if formatted not in elements:
+                    elements.append(formatted)
+
+            logger.info("Extracted %d accessibility IDs", len(elements))
+            return elements[:30]
+
         except Exception as e:
-            logger.warning(f"Failed to extract UI elements: {e}")
+            logger.warning("Failed to extract UI elements: %s", e)
             return []
     
     def _extract_sample_code(self) -> str:

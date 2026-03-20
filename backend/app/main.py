@@ -1,4 +1,5 @@
 """FastAPI application entry point with lifespan-managed services."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
         max_tokens=settings.llm_max_tokens,
         api_key=settings.anthropic_api_key,
     )
+    app.state.llm = llm
     app.state.test_generator = TestGenerator(llm=llm)
     app.state.rag_service = RAGService(settings=settings)
     app.state.enrichment_service = EnrichmentService(llm=llm)
@@ -69,6 +71,9 @@ async def lifespan(app: FastAPI):
     else:
         app.state.appium_service = None
         logger.info("Appium discovery disabled (set APPIUM_ENABLED=true to enable)")
+
+    # Lock to prevent Appium discovery while a test is running on the simulator
+    app.state.test_execution_lock = asyncio.Lock()
 
     logger.info("Services initialised. Auth enabled: %s", bool(settings.api_key))
     yield

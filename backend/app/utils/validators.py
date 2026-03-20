@@ -25,7 +25,7 @@ def build_context_section(app_context: Optional[AppContext]) -> str:
         sections.append(f"UI Elements:\n{elements_str}")
 
     if app_context.accessibility_ids:
-        sections.append(f"Accessibility IDs: {', '.join(app_context.accessibility_ids)}")
+        sections.append(_format_accessibility_ids(app_context.accessibility_ids))
 
     if app_context.custom_types:
         sections.append(f"Custom Types: {', '.join(app_context.custom_types)}")
