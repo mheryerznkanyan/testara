@@ -91,9 +91,19 @@ def upsert_documents(vs: Chroma, docs: List[Document]) -> None:
 
     Note: Chroma >= 0.4 auto-persists; no explicit persist() call needed.
     """
-    ids = [sha1(d.page_content + safe_json(d.metadata)) for d in docs]
-    vs.add_documents(documents=docs, ids=ids)
-    logger.info("Upserted %d documents into vector store.", len(docs))
+    seen: dict[str, int] = {}
+    unique_docs: List[Document] = []
+    unique_ids: List[str] = []
+    for d in docs:
+        doc_id = sha1(d.page_content + safe_json(d.metadata))
+        if doc_id not in seen:
+            seen[doc_id] = 1
+            unique_docs.append(d)
+            unique_ids.append(doc_id)
+    if len(unique_docs) < len(docs):
+        logger.info("Deduplicated %d → %d documents.", len(docs), len(unique_docs))
+    vs.add_documents(documents=unique_docs, ids=unique_ids)
+    logger.info("Upserted %d documents into vector store.", len(unique_docs))
 
 
 def get_indexed_paths(vs: Chroma) -> Set[str]:

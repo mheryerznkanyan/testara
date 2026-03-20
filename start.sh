@@ -116,15 +116,7 @@ elif [ -f .testara_setup_done ]; then
 fi
 
 if [ "$SETUP_NEEDED" = true ]; then
-    echo -e "\n${CYAN}${BOLD}Setting Up Xcode Project${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    $PYTHON backend/app/utils/add_test_file.py
-    if [ $? -eq 0 ]; then
-        echo "$PROJECT_ROOT" > .testara_setup_done
-        echo -e "${GREEN}✓${NC} Xcode setup complete"
-    else
-        echo -e "${YELLOW}⚠${NC}  Xcode setup needs manual steps (see above)"
-    fi
+    echo "$PROJECT_ROOT" > .testara_setup_done
 fi
 
 # RAG indexing (runs on first launch or when PROJECT_ROOT changes)
