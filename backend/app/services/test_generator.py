@@ -137,7 +137,7 @@ class TestGenerator:
             return ""
         return f"{RUNTIME_TREE_INSTRUCTIONS}\n\n{tree_str}\n"
 
-    def run(self, request: TestGenerationRequest, accessibility_snapshot=None) -> TestGenerationResponse:
+    def run(self, request: TestGenerationRequest, accessibility_snapshot=None, error_context: str = "") -> TestGenerationResponse:
         """Generate an Appium Python test function from the request."""
         context_section = build_context_section(request.app_context)
         class_name_section = build_class_name_section(request.class_name)
@@ -151,12 +151,19 @@ class TestGenerator:
                 len(accessibility_snapshot.interactive_elements()),
             )
 
+        error_section = (
+            f"\nPREVIOUS ATTEMPT FAILED WITH ERROR:\n{error_context}\n"
+            f"Fix this error in your new test. Do not repeat the same mistake.\n"
+            if error_context else ""
+        )
+
         user_message = (
             f"Generate an Appium Python test function for the following:\n\n"
             f"Test Description: {request.test_description}\n\n"
             f"{runtime_section}"
             f"{context_section}\n\n"
             f"{class_name_section}\n\n"
+            f"{error_section}"
             f"Include comments: {request.include_comments}\n\n"
             "Output ONLY Python code."
         )
