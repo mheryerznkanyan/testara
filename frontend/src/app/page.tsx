@@ -190,20 +190,45 @@ export default function TestGenerator() {
     setExecutionResult(null)
 
     try {
-      const res = await fetch('http://localhost:8000/run-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          test_code: result.test_code,
-          bundle_id: settings.bundleId || undefined,
-          device_udid: settings.deviceUdid || '',
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => null)
-        throw new Error(err?.detail || 'Failed to run test')
+      const runTest = async (testCode: string) => {
+        const res = await fetch('http://localhost:8000/run-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            test_code: testCode,
+            bundle_id: settings.bundleId || undefined,
+            device_udid: settings.deviceUdid || '',
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.detail || 'Failed to run test')
+        }
+        return res.json()
       }
-      const data = await res.json()
+
+      let data = await runTest(result.test_code)
+
+      // If execution error (not assertion failure) → regenerate with error, run once more
+      if (!data.success && data.error && !data.error.startsWith('Assertion failed:')) {
+        const regenRes = await fetch('http://localhost:8000/generate-test-with-rag', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            test_description: `${description}\n\nPREVIOUS ATTEMPT FAILED WITH ERROR:\n${data.error}\nFix this error. Do not repeat the same mistake.`,
+            test_type: 'ui',
+            include_comments: true,
+            bundle_id: settings.bundleId || undefined,
+            device_udid: settings.deviceUdid || undefined,
+          }),
+        })
+        if (regenRes.ok) {
+          const regenData = await regenRes.json()
+          setResult(regenData) // update displayed code to the fixed version
+          data = await runTest(regenData.test_code)
+        }
+      }
+
       setExecutionResult(data)
       scrollTo(executionRef)
     } catch (err) {
