@@ -47,22 +47,13 @@ async def lifespan(app: FastAPI):
     # Initialize Appium test runner (lazy — Appium server may not be running at startup)
     recordings_dir = Path(__file__).parent.parent / "recordings"
     from app.services.test_runner import AppiumTestRunner
-    try:
-        app.state.test_runner = AppiumTestRunner(
-            recordings_dir=recordings_dir,
-            bundle_id=settings.bundle_id,
-            server_url=settings.appium_server_url,
-            test_timeout=settings.appium_test_timeout,
-        )
-        logger.info("AppiumTestRunner initialized (server: %s)", settings.appium_server_url)
-    except Exception as e:
-        logger.warning("AppiumTestRunner init warning: %s", e)
-        app.state.test_runner = AppiumTestRunner(
-            recordings_dir=recordings_dir,
-            bundle_id=settings.bundle_id,
-            server_url=settings.appium_server_url,
-            test_timeout=settings.appium_test_timeout,
-        )
+    app.state.test_runner = AppiumTestRunner(
+        recordings_dir=recordings_dir,
+        bundle_id=settings.bundle_id,
+        server_url=settings.appium_server_url,
+        test_timeout=settings.appium_test_timeout,
+    )
+    logger.info("AppiumTestRunner initialized (server: %s)", settings.appium_server_url)
     
     # Appium discovery service (optional)
     from app.services.appium_discovery_service import AppiumDiscoveryService

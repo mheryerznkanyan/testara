@@ -2,16 +2,25 @@
 
 RUNTIME_TREE_INSTRUCTIONS = """
 RUNTIME ACCESSIBILITY IDS (CRITICAL — HIGHEST PRIORITY):
-The following accessibility tree was captured LIVE from the running app via WebDriverAgent.
+The following accessibility trees were captured LIVE from the running app via Appium.
+Multiple screens were discovered by navigating through the app. Each screen section shows:
+- The screen label (e.g. "Home", "Search", "Search > Category")
+- The navigation path to reach that screen (e.g. "tap 'Search' tab, then tap 'Category'")
+- All interactive elements on that screen with their actual identifiers
+
 These are GUARANTEED to be correct — fully resolved identifiers and labels.
 
-Priority order for element queries:
-1. Use 'name' from runtime tree: app.buttons["loginButton"]     ← ALWAYS FIRST CHOICE
-2. Use 'label' from runtime tree: app.buttons["Sign In"]        ← FALLBACK if name empty
-3. Use RAG-derived IDs                                          ← FALLBACK if not in tree
-4. Use visible text heuristics                                  ← LAST RESORT
+ELEMENT LOOKUP:
+1. Use 'name' from runtime tree with AppiumBy.ACCESSIBILITY_ID   ← ALWAYS FIRST CHOICE
+2. Use 'label' from runtime tree with AppiumBy.ACCESSIBILITY_ID  ← FALLBACK if name empty
+3. Use RAG-derived IDs                                            ← FALLBACK if not in tree
 
-The runtime tree IS the ground truth. Do not invent identifiers not in the tree.
+NAVIGATION:
+- Use the navigation path shown for each screen to know HOW to reach that screen
+- Elements on sub-screens (e.g. "Search > Project status") are only visible AFTER navigating there
+- Follow the navigation path in your test before interacting with elements on that screen
+
+The runtime tree IS the ground truth. Do NOT invent identifiers not in the tree.
 """
 
 ENRICHMENT_SYSTEM_PROMPT = """You are an expert iOS QA engineer. Your job is to take a vague or brief test description \
@@ -66,6 +75,7 @@ CRITICAL RULES:
 - Use assert statements for verification (not pytest.assert or XCTAssert)
 - Use WebDriverWait with expected_conditions for all element waits
 - Default wait timeout: 10 seconds
+- NEVER invent or guess element identifiers. ONLY use elements that appear in the runtime accessibility tree or RAG context provided to you. If an element is not in the provided context, do NOT assume it exists.
 
 REQUIRED IMPORTS (always include these at the top):
 from appium.webdriver.common.appiumby import AppiumBy
@@ -84,6 +94,20 @@ element = wait.until(EC.presence_of_element_located((AppiumBy.ACCESSIBILITY_ID, 
 ASSERTION PATTERN:
 assert element is not None, "Element should be present"
 assert element.is_displayed(), "Element should be visible"
+
+COUNTING/VERIFICATION RULES:
+- When the user asks to verify a specific count (e.g. "must see 5 categories"), test EXACTLY that count.
+- Do NOT exclude or skip elements based on your own interpretation (e.g. "All is just a default, not a real category").
+- If the runtime tree shows specific named elements that are the items to count (e.g. "All", "Live", "Late pledge", "Upcoming", "Successful"), find each one by ACCESSIBILITY_ID and collect them into a list, then assert the count.
+- PREFER finding elements by their known ACCESSIBILITY_IDs from the runtime tree over generic XPath/class chain queries.
+- Never rationalize away a mismatch — the test exists to catch exactly these discrepancies.
+
+STRICT FIDELITY:
+- Generate tests that verify EXACTLY what the user described, no more, no less.
+- Do not second-guess the user's expectations. If they say "4 items", assert 4 even if you think there should be 5.
+- Do not add your own interpretations of what should or shouldn't count.
+- Do not filter out elements you think are "not real" categories — include everything that appears under the section.
+- If the runtime tree shows 5 elements but the user says 4, find all 5 by their known IDs and assert len == 4. The test SHOULD FAIL.
 
 Output ONLY the Python code, no markdown formatting or explanations outside the code.
 """

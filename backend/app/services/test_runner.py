@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import aiohttp
+
 logger = logging.getLogger(__name__)
 
 # Harness template written alongside test file; owns the Appium driver lifecycle.
@@ -23,15 +25,17 @@ import time as _time
 
 try:
     from appium import webdriver as appium_webdriver
-    from appium.options import XCUITestOptions
+    from appium.options.ios import XCUITestOptions
 except ImportError as e:
     print(json.dumps({{"success": False, "error": f"Import error: {{e}}", "logs": "", "duration": 0}}))
     sys.exit(2)
 
-TEST_FILE   = {test_file!r}
-BUNDLE_ID   = {bundle_id!r}
-DEVICE_UDID = {device_udid!r}
-SERVER_URL  = {server_url!r}
+TEST_FILE       = {test_file!r}
+BUNDLE_ID       = {bundle_id!r}
+DEVICE_UDID     = {device_udid!r}
+SERVER_URL      = {server_url!r}
+LOGIN_EMAIL     = {login_email!r}
+LOGIN_PASSWORD  = {login_password!r}
 
 def _load_test_fn(path):
     spec = importlib.util.spec_from_file_location("_generated_test", path)
@@ -41,6 +45,41 @@ def _load_test_fn(path):
     if not fns:
         raise RuntimeError("No test_ function found in generated code")
     return fns[0]
+
+def _auto_login(drv):
+    if not LOGIN_EMAIL or not LOGIN_PASSWORD:
+        return
+    from appium.webdriver.common.appiumby import AppiumBy
+    email_ids = ["emailTextField", "email_field", "usernameField", "email"]
+    pwd_ids = ["passwordTextField", "password_field", "passwordField", "password"]
+    btn_ids = ["loginButton", "login_button", "signInButton", "Log in"]
+    for fid in email_ids:
+        try:
+            el = drv.find_element(AppiumBy.ACCESSIBILITY_ID, fid)
+            if el.is_displayed():
+                el.clear()
+                el.send_keys(LOGIN_EMAIL)
+                for pid in pwd_ids:
+                    try:
+                        pf = drv.find_element(AppiumBy.ACCESSIBILITY_ID, pid)
+                        if pf.is_displayed():
+                            pf.clear()
+                            pf.send_keys(LOGIN_PASSWORD)
+                            break
+                    except Exception:
+                        continue
+                for bid in btn_ids:
+                    try:
+                        btn = drv.find_element(AppiumBy.ACCESSIBILITY_ID, bid)
+                        if btn.is_displayed():
+                            btn.click()
+                            _time.sleep(3)
+                            return
+                    except Exception:
+                        continue
+                return
+        except Exception:
+            continue
 
 start  = _time.time()
 driver = None
@@ -55,6 +94,15 @@ try:
     options.no_reset = True
 
     driver = appium_webdriver.Remote(SERVER_URL, options=options)
+
+    # Reset app to home screen before every test
+    driver.terminate_app(BUNDLE_ID)
+    _time.sleep(1)
+    driver.activate_app(BUNDLE_ID)
+    _time.sleep(2)
+
+    # Auto-login if login screen is detected
+    _auto_login(driver)
 
     _old_stdout = sys.stdout
     sys.stdout  = io.StringIO()
@@ -142,6 +190,16 @@ class AppiumTestRunner:
                 "duration": 0,
             }
 
+        # Pre-check: is Appium server reachable?
+        if not await self._is_server_running():
+            return {
+                "success": False,
+                "test_id": test_id,
+                "error": f"Appium server not reachable at {self.server_url}. Start it with: appium",
+                "logs": "",
+                "duration": 0,
+            }
+
         logger.info("=== Appium test run %s ===", test_id)
         logger.info("  bundle_id=%s  udid=%s  server=%s", effective_bundle_id, device_udid or "auto", self.server_url)
 
@@ -152,11 +210,14 @@ class AppiumTestRunner:
 
         try:
             test_file.write_text(test_code)
+            from app.core.config import settings
             harness_src = _HARNESS_TEMPLATE.format(
                 test_file=str(test_file),
                 bundle_id=effective_bundle_id,
                 device_udid=device_udid,
                 server_url=self.server_url,
+                login_email=settings.test_credentials_email or "",
+                login_password=settings.test_credentials_password or "",
             )
             harness_file.write_text(harness_src)
 
@@ -171,13 +232,21 @@ class AppiumTestRunner:
 
             video_ready = record_video and video_path.exists() and video_path.stat().st_size > 0
 
+            # Copy failure screenshot to recordings dir so it persists after temp cleanup
+            screenshot_name = None
+            raw_screenshot = result.get("screenshot")
+            if raw_screenshot and Path(raw_screenshot).exists():
+                screenshot_name = f"{test_id}_failure.png"
+                import shutil as _shutil
+                _shutil.copy2(raw_screenshot, self.recordings_dir / screenshot_name)
+
             return {
                 "test_id":    test_id,
                 "success":    result.get("success", False),
                 "logs":       result.get("logs", ""),
                 "duration":   result.get("duration", 0),
                 "error":      result.get("error"),
-                "screenshot": result.get("screenshot"),
+                "screenshot": screenshot_name,
                 "video_path": str(video_path.name) if video_ready else None,
             }
 
@@ -187,6 +256,17 @@ class AppiumTestRunner:
 
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
+
+    async def _is_server_running(self) -> bool:
+        """Quick health check against Appium /status endpoint."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.server_url}/status", timeout=aiohttp.ClientTimeout(total=3)
+                ) as resp:
+                    return resp.status == 200
+        except Exception:
+            return False
 
     async def _run_harness(self, harness_file: Path) -> Dict[str, Any]:
         """Run harness.py as subprocess, parse JSON from stdout."""

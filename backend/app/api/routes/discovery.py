@@ -1,5 +1,6 @@
 """Appium accessibility discovery routes"""
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -55,16 +56,27 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
 
         interactive = snapshot.interactive_elements()
 
-        # Store snapshot in app state for use by test generation
+        # Total element count across all screens
+        total_elements = sum(len(s.elements) for s in snapshot.screens) if hasattr(snapshot, 'screens') else len(getattr(snapshot, 'elements', []))
+
+        # Store snapshot in app state and persist to disk
         if not hasattr(request.app.state, "snapshots"):
             request.app.state.snapshots = {}
         snapshot_key = f"{body.bundle_id}:{body.device_udid}"
         request.app.state.snapshots[snapshot_key] = snapshot
 
+        # Save to disk for reuse across restarts
+        from app.core.config import settings
+        snapshot_path = str(Path(settings.rag_persist_dir) / "discovery_snapshot.json")
+        try:
+            snapshot.save(snapshot_path)
+        except Exception as e:
+            logger.warning("Could not save snapshot to disk: %s", e)
+
         return DiscoveryResponse(
             success=len(interactive) > 0,
             bundle_id=body.bundle_id,
-            element_count=len(snapshot.elements),
+            element_count=total_elements,
             interactive_count=len(interactive),
             elements=[
                 ElementSummary(

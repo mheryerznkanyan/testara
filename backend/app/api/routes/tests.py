@@ -81,26 +81,70 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         include_comments=body.include_comments,
     )
 
-    # Appium discovery (optional)
+    # Load cached discovery snapshot (run /discover once, reuse forever)
     accessibility_snapshot = None
-    if body.discovery_enabled and body.bundle_id and body.device_udid:
-        appium_service = getattr(request.app.state, "appium_service", None)
-        if appium_service:
-            try:
-                accessibility_snapshot = await appium_service.discover(
-                    bundle_id=body.bundle_id,
-                    device_udid=body.device_udid,
-                )
-                logger.info(
-                    "Appium discovery complete: %d interactive elements",
-                    len(accessibility_snapshot.interactive_elements()),
-                )
-            except Exception as e:
-                logger.warning("Appium discovery failed (continuing without): %s", e)
-        else:
-            logger.warning(
-                "discovery_enabled=True but Appium service not initialized (APPIUM_ENABLED=false)"
+    from pathlib import Path
+    from app.utils.accessibility_tree_parser import MultiScreenSnapshot
+
+    snapshot_path = Path(settings.rag_persist_dir) / "discovery_snapshot.json"
+    if snapshot_path.exists():
+        try:
+            accessibility_snapshot = MultiScreenSnapshot.load(str(snapshot_path))
+            logger.info(
+                "Loaded cached discovery snapshot: %d screens, %d interactive elements",
+                len(accessibility_snapshot.screens),
+                len(accessibility_snapshot.interactive_elements()),
             )
+        except Exception as e:
+            logger.warning("Could not load cached snapshot: %s", e)
+
+    # Fall back to live discovery if no cache and discovery is enabled
+    if accessibility_snapshot is None and body.discovery_enabled:
+        effective_bundle_id = body.bundle_id or settings.bundle_id
+        effective_device_udid = body.device_udid or ""
+
+        # Auto-detect booted simulator if no UDID provided
+        if effective_bundle_id and not effective_device_udid:
+            try:
+                import subprocess, json as _json
+                raw = subprocess.check_output(
+                    ["xcrun", "simctl", "list", "devices", "booted", "--json"],
+                    timeout=5,
+                )
+                device_data = _json.loads(raw)
+                for runtime, devices in device_data.get("devices", {}).items():
+                    for d in devices:
+                        if d.get("state") == "Booted":
+                            effective_device_udid = d["udid"]
+                            break
+                    if effective_device_udid:
+                        break
+            except Exception as e:
+                logger.warning("Could not auto-detect booted simulator: %s", e)
+
+        if effective_bundle_id and effective_device_udid:
+            appium_service = getattr(request.app.state, "appium_service", None)
+            if appium_service:
+                try:
+                    accessibility_snapshot = await appium_service.discover(
+                        bundle_id=effective_bundle_id,
+                        device_udid=effective_device_udid,
+                    )
+                    logger.info(
+                        "Appium discovery complete: %d interactive elements",
+                        len(accessibility_snapshot.interactive_elements()),
+                    )
+                    # Save to disk for future reuse
+                    try:
+                        accessibility_snapshot.save(str(snapshot_path))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning("Appium discovery failed (continuing without): %s", e)
+            else:
+                logger.warning(
+                    "discovery_enabled=True but Appium service not initialized (APPIUM_ENABLED=false)"
+                )
 
     generator = request.app.state.test_generator
     try:

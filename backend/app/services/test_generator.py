@@ -64,9 +64,74 @@ class TestGenerator:
     def _invoke_llm(self, messages):
         return self._llm.invoke(messages)
 
-    def _build_runtime_context_section(self, snapshot) -> str:
+    def _filter_relevant_screens(self, snapshot, description: str):
+        """Return a filtered snapshot with only screens relevant to the test description."""
+        from app.utils.accessibility_tree_parser import MultiScreenSnapshot, ScreenCapture
+
+        if not hasattr(snapshot, 'screens') or not snapshot.screens:
+            return snapshot
+
+        desc_lower = description.lower()
+        keywords = set(desc_lower.split())
+
+        scored_screens = []
+        for screen in snapshot.screens:
+            label_lower = screen.screen_label.lower()
+            # Always include Home (starting point for navigation)
+            if label_lower == "home":
+                scored_screens.append((1000, screen))
+                continue
+
+            score = 0
+            # Match screen label against description (high weight)
+            for word in label_lower.replace(">", " ").split():
+                word = word.strip()
+                if word and word in keywords:
+                    score += 100
+            # Bonus if full screen label phrase appears in description
+            for part in label_lower.split(">"):
+                part = part.strip()
+                if part and part in desc_lower:
+                    score += 200
+
+            # Match element names against description (low weight, capped)
+            elem_score = 0
+            for e in screen.interactive_elements():
+                name_lower = e.name.lower()
+                if name_lower in desc_lower:
+                    elem_score += 5
+                if elem_score >= 20:
+                    break  # cap element matching to avoid large screens dominating
+
+            score += elem_score
+
+            if score > 0:
+                scored_screens.append((score, screen))
+
+        # Sort by relevance, take top screens (Home + up to 5 most relevant)
+        scored_screens.sort(key=lambda x: x[0], reverse=True)
+        selected = [s for _, s in scored_screens[:6]]
+
+        if not selected:
+            # No match — just send Home + first 2 screens as fallback
+            selected = snapshot.screens[:3]
+
+        logger.info(
+            "Filtered %d → %d relevant screens for: %r",
+            len(snapshot.screens), len(selected), description[:60],
+        )
+
+        return MultiScreenSnapshot(
+            screens=selected,
+            bundle_id=snapshot.bundle_id,
+            device_udid=snapshot.device_udid,
+        )
+
+    def _build_runtime_context_section(self, snapshot, description: str = "") -> str:
         if snapshot is None:
             return ""
+        if description:
+            snapshot = self._filter_relevant_screens(snapshot, description)
         tree_str = snapshot.to_context_string()
         if not tree_str or "No interactive elements" in tree_str:
             return ""
@@ -76,7 +141,9 @@ class TestGenerator:
         """Generate an Appium Python test function from the request."""
         context_section = build_context_section(request.app_context)
         class_name_section = build_class_name_section(request.class_name)
-        runtime_section = self._build_runtime_context_section(accessibility_snapshot)
+        runtime_section = self._build_runtime_context_section(
+            accessibility_snapshot, request.test_description
+        )
 
         if accessibility_snapshot and accessibility_snapshot.interactive_elements():
             logger.info(

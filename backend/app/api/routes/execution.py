@@ -53,6 +53,10 @@ async def run_test(request: Request, body: TestExecutionRequest):
         if result.get("video_path"):
             video_url = f"/recordings/{result['video_path']}"
 
+        screenshot_url = None
+        if result.get("screenshot"):
+            screenshot_url = f"/recordings/{result['screenshot']}"
+
         return TestExecutionResponse(
             success=result.get("success", False),
             test_id=result.get("test_id", ""),
@@ -60,7 +64,7 @@ async def run_test(request: Request, body: TestExecutionRequest):
             logs=result.get("logs", ""),
             duration=result.get("duration", 0.0),
             error=result.get("error"),
-            screenshot=result.get("screenshot"),
+            screenshot=screenshot_url,
         )
 
     except Exception as e:

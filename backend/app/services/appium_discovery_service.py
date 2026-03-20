@@ -7,7 +7,12 @@ from typing import List, Optional
 
 import httpx
 
-from app.utils.accessibility_tree_parser import AccessibilitySnapshot, parse_wda_xml
+from app.utils.accessibility_tree_parser import (
+    AccessibilitySnapshot,
+    MultiScreenSnapshot,
+    ScreenCapture,
+    parse_wda_xml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,24 +172,21 @@ class AppiumDiscoveryService:
         device_udid: str,
         screen_hints: Optional[List[str]] = None,
         discovery_timeout: int = 60,
-    ) -> AccessibilitySnapshot:
+    ) -> MultiScreenSnapshot:
         """
-        Launch app via Appium, capture accessibility tree + screenshot.
+        Launch app via Appium, capture accessibility trees from multiple screens.
 
-        Args:
-            bundle_id: App bundle ID e.g. "com.example.MyApp"
-            device_udid: UDID of already-booted iOS Simulator
-            screen_hints: Optional list of screen names to try navigating to
-            discovery_timeout: Max seconds to wait for elements
+        Resets the app, captures the home screen, then navigates through tabs
+        and tappable filter/section buttons to capture sub-screens.
 
         Returns:
-            AccessibilitySnapshot with elements and screenshot
+            MultiScreenSnapshot with elements from all discovered screens
         """
         if not self.is_server_running():
             logger.warning("Appium server not running, attempting auto-start...")
             if not self.start_appium_server():
                 logger.error("Cannot connect to Appium server")
-                return AccessibilitySnapshot(bundle_id=bundle_id, device_udid=device_udid)
+                return MultiScreenSnapshot(bundle_id=bundle_id, device_udid=device_udid)
 
         loop = asyncio.get_event_loop()
         snapshot = await loop.run_in_executor(
@@ -194,22 +196,96 @@ class AppiumDiscoveryService:
         )
         return snapshot
 
+    def _try_auto_login(self, driver) -> None:
+        """Attempt auto-login if a login screen is detected and credentials are configured."""
+        from app.core.config import settings
+        from appium.webdriver.common.appiumby import AppiumBy
+
+        email = settings.test_credentials_email
+        password = settings.test_credentials_password
+        if not email or not password:
+            return
+
+        # Common login field IDs (app-specific first, then generic)
+        email_ids = ["emailTextField", "email_field", "usernameField", "email", "Email"]
+        password_ids = ["passwordTextField", "password_field", "passwordField", "password", "Password"]
+        login_btn_ids = ["loginButton", "login_button", "signInButton", "Log in", "Sign in"]
+
+        email_field = None
+        for fid in email_ids:
+            try:
+                el = driver.find_element(AppiumBy.ACCESSIBILITY_ID, fid)
+                if el.is_displayed():
+                    email_field = el
+                    break
+            except Exception:
+                continue
+
+        if not email_field:
+            logger.debug("No login screen detected, skipping auto-login")
+            return
+
+        logger.info("Login screen detected, entering credentials...")
+        email_field.clear()
+        email_field.send_keys(email)
+
+        for pid in password_ids:
+            try:
+                pwd_field = driver.find_element(AppiumBy.ACCESSIBILITY_ID, pid)
+                if pwd_field.is_displayed():
+                    pwd_field.clear()
+                    pwd_field.send_keys(password)
+                    break
+            except Exception:
+                continue
+
+        for bid in login_btn_ids:
+            try:
+                btn = driver.find_element(AppiumBy.ACCESSIBILITY_ID, bid)
+                if btn.is_displayed():
+                    btn.click()
+                    time.sleep(3)
+                    logger.info("Auto-login completed")
+                    return
+            except Exception:
+                continue
+
+        logger.warning("Could not find login button after entering credentials")
+
+    def _capture_screen(self, driver, label: str, nav_path: str = "") -> ScreenCapture:
+        """Capture current screen's accessibility tree."""
+        xml = driver.page_source
+        screenshot_b64 = driver.get_screenshot_as_base64()
+        elements = parse_wda_xml(xml)
+        interactive = [e for e in elements if e.is_interactive and e.has_useful_name]
+        logger.info(
+            "  Screen '%s': %d elements, %d interactive",
+            label, len(elements), len(interactive),
+        )
+        return ScreenCapture(
+            screen_label=label,
+            elements=elements,
+            screenshot_b64=screenshot_b64,
+            navigation_path=nav_path,
+        )
+
     def _discover_sync(
         self,
         bundle_id: str,
         device_udid: str,
         screen_hints: Optional[List[str]],
         discovery_timeout: int,
-    ) -> AccessibilitySnapshot:
-        """Synchronous discovery — runs in thread executor."""
+    ) -> MultiScreenSnapshot:
+        """Multi-screen discovery — captures home screen, tabs, and sub-screens."""
         try:
             from appium import webdriver
-            from appium.options import XCUITestOptions
+            from appium.options.ios import XCUITestOptions
+            from appium.webdriver.common.appiumby import AppiumBy
         except ImportError:
             logger.error(
                 "Appium-Python-Client not installed. Run: pip install Appium-Python-Client"
             )
-            return AccessibilitySnapshot(bundle_id=bundle_id, device_udid=device_udid)
+            return MultiScreenSnapshot(bundle_id=bundle_id, device_udid=device_udid)
 
         opts = XCUITestOptions()
         opts.platform_name = "iOS"
@@ -221,45 +297,141 @@ class AppiumDiscoveryService:
         opts.should_use_singleton_test_manager = False
 
         driver = None
+        screens: List[ScreenCapture] = []
+
         try:
-            logger.info("Connecting to Appium for bundle_id=%s udid=%s", bundle_id, device_udid)
+            logger.info("Multi-screen discovery for bundle_id=%s", bundle_id)
             driver = webdriver.Remote(self.server_url, options=opts)
 
-            # Brief wait for app to settle
+            # Reset app to home screen
+            driver.terminate_app(bundle_id)
+            time.sleep(1)
+            driver.activate_app(bundle_id)
             time.sleep(2)
 
-            # Capture page source (live accessibility tree XML)
-            logger.info("Capturing accessibility tree...")
-            xml = driver.page_source
+            # Auto-login if credentials are configured and a login screen is detected
+            self._try_auto_login(driver)
 
-            # Capture screenshot
-            logger.info("Capturing screenshot...")
-            screenshot_b64 = driver.get_screenshot_as_base64()
+            # 1. Capture home screen (post-login if applicable)
+            screens.append(self._capture_screen(driver, "Home"))
 
-            elements = parse_wda_xml(xml)
+            # 2. Discover tab bar buttons and navigate to each tab
+            home_elements = screens[0].elements
+            tab_names = []
+            for e in home_elements:
+                if e.element_type == "XCUIElementTypeButton" and e.has_useful_name:
+                    # Tab bar buttons are typically at the bottom of the screen (y > 750)
+                    if e.y > 700 and e.name not in tab_names:
+                        tab_names.append(e.name)
+
+            logger.info("Detected tab bar buttons: %s", tab_names)
+
+            for tab_name in tab_names:
+                try:
+                    tab_el = driver.find_element(AppiumBy.ACCESSIBILITY_ID, tab_name)
+                    tab_el.click()
+                    time.sleep(1.5)
+
+                    screen = self._capture_screen(
+                        driver,
+                        label=tab_name,
+                        nav_path=f"tap '{tab_name}' tab",
+                    )
+                    screens.append(screen)
+
+                    # 3. On each tab screen, try tapping expandable sections
+                    #    (buttons that reveal sub-content like filters)
+                    tappable = [
+                        e for e in screen.interactive_elements()
+                        if e.element_type == "XCUIElementTypeButton"
+                        and e.has_useful_name
+                        and e.y < 700  # not tab bar
+                        and e.name not in tab_names  # not another tab
+                        and e.name not in ("Cancel", "Close", "Back", "Done",
+                                           "See results", "Reset all", "icon  cross")
+                    ]
+
+                    for btn in tappable[:5]:  # cap at 5 sub-screens per tab
+                        try:
+                            # Remember current element names before clicking
+                            pre_click_names = {
+                                e.name for e in parse_wda_xml(driver.page_source)
+                                if e.is_interactive and e.has_useful_name
+                            }
+
+                            btn_el = driver.find_element(AppiumBy.ACCESSIBILITY_ID, btn.name)
+                            btn_el.click()
+
+                            # Wait up to 8s for new elements to appear
+                            deadline = time.time() + 8
+                            sub_screen = None
+                            while time.time() < deadline:
+                                time.sleep(1)
+                                candidate = self._capture_screen(
+                                    driver,
+                                    label=f"{tab_name} > {btn.name}",
+                                    nav_path=f"tap '{tab_name}' tab, then tap '{btn.name}'",
+                                )
+                                current_names = {
+                                    e.name for e in candidate.interactive_elements()
+                                }
+                                new_names = current_names - pre_click_names
+                                if new_names:
+                                    sub_screen = candidate
+                                    break
+
+                            if sub_screen:
+                                new_count = len({
+                                    e.name for e in sub_screen.interactive_elements()
+                                } - {e.name for e in screen.interactive_elements()})
+                                screens.append(sub_screen)
+                                logger.info(
+                                    "  Sub-screen '%s > %s' revealed %d new elements",
+                                    tab_name, btn.name, new_count,
+                                )
+                            else:
+                                logger.debug(
+                                    "  Sub-screen '%s > %s' — no new elements after 8s",
+                                    tab_name, btn.name,
+                                )
+
+                            # Navigate back (tap back button or same button to collapse)
+                            try:
+                                back = driver.find_element(AppiumBy.ACCESSIBILITY_ID, "BackButton")
+                                back.click()
+                            except Exception:
+                                try:
+                                    btn_el = driver.find_element(AppiumBy.ACCESSIBILITY_ID, btn.name)
+                                    btn_el.click()
+                                except Exception:
+                                    pass
+                            time.sleep(1)
+
+                        except Exception as e:
+                            logger.debug("Could not explore sub-screen '%s': %s", btn.name, e)
+
+                except Exception as e:
+                    logger.debug("Could not navigate to tab '%s': %s", tab_name, e)
+
+            total_interactive = len(MultiScreenSnapshot(screens=screens).all_interactive_elements())
             logger.info(
-                "Discovered %d total elements, %d interactive with IDs",
-                len(elements),
-                len([e for e in elements if e.is_interactive and e.has_useful_name]),
+                "Multi-screen discovery complete: %d screens, %d unique interactive elements",
+                len(screens), total_interactive,
             )
 
-            return AccessibilitySnapshot(
-                elements=elements,
-                screenshot_b64=screenshot_b64,
-                raw_xml=xml,
+            return MultiScreenSnapshot(
+                screens=screens,
                 bundle_id=bundle_id,
                 device_udid=device_udid,
             )
 
         except Exception as e:
-            logger.error("Appium discovery failed: %s", e, exc_info=True)
-            return AccessibilitySnapshot(bundle_id=bundle_id, device_udid=device_udid)
+            logger.error("Multi-screen discovery failed: %s", e, exc_info=True)
+            return MultiScreenSnapshot(bundle_id=bundle_id, device_udid=device_udid)
         finally:
             if driver:
                 try:
                     driver.quit()
                 except Exception:
                     pass
-            
-            # Critical: Kill all WDA processes to free testmanagerd for xcodebuild
             self._kill_wda(device_udid)

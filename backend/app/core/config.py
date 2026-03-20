@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     appium_discovery_timeout: int = 60
     appium_test_timeout: int = 120
 
+    # Test credentials for auto-login (used by discovery and test runner)
+    test_credentials_email: str = ""
+    test_credentials_password: str = ""
+
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
 
