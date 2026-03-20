@@ -49,6 +49,16 @@ async def run_test(request: Request, body: TestExecutionRequest):
             record_video=body.record_video,
         )
 
+        # If it errored (not an assertion failure), retry once automatically
+        if not result.get("success") and not (result.get("error") or "").startswith("Assertion failed:"):
+            logger.info("Test errored on attempt 1, retrying once: %s", result.get("error"))
+            result = await test_runner.run_test(
+                test_code=body.test_code,
+                bundle_id=effective_bundle_id,
+                device_udid=body.device_udid,
+                record_video=body.record_video,
+            )
+
         video_url = None
         if result.get("video_path"):
             video_url = f"/recordings/{result['video_path']}"
