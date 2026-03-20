@@ -24,9 +24,10 @@ class TestGenerationRequest(BaseModel):
 
 
 class TestGenerationResponse(BaseModel):
-    swift_code: str
+    test_code: str
     test_type: str
     class_name: str
+    language: str = "python"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

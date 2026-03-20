@@ -1,619 +1,342 @@
-"""iOS Simulator test runner with video recording"""
+"""Appium-based test runner — subprocess isolated, timeout-safe."""
 import asyncio
+import json
 import logging
-import re
 import signal
-import subprocess
+import shutil
 import tempfile
-import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional
-import os
+from typing import Any, Dict, Optional
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# Harness template written alongside test file; owns the Appium driver lifecycle.
+# Uses double-braces {{ }} for literal braces in the f-string template.
+_HARNESS_TEMPLATE = """\
+import sys
+import json
+import traceback
+import importlib.util
+import io
+import time as _time
 
-class TestRunner:
-    """Runs XCUITests in iOS Simulator and records video"""
+try:
+    from appium import webdriver as appium_webdriver
+    from appium.options.ios import XCUITestOptions
+except ImportError as e:
+    print(json.dumps({{"success": False, "error": f"Import error: {{e}}", "logs": "", "duration": 0}}))
+    sys.exit(2)
 
-    def __init__(self, recordings_dir: Path, xcode_project: str = "", xcode_scheme: str = "SampleApp", xcode_ui_test_target: str = "SampleAppUITests"):
+TEST_FILE       = {test_file!r}
+BUNDLE_ID       = {bundle_id!r}
+DEVICE_UDID     = {device_udid!r}
+SERVER_URL      = {server_url!r}
+LOGIN_EMAIL     = {login_email!r}
+LOGIN_PASSWORD  = {login_password!r}
+
+def _load_test_fn(path):
+    spec = importlib.util.spec_from_file_location("_generated_test", path)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    fns = [v for k, v in vars(mod).items() if k.startswith("test_") and callable(v)]
+    if not fns:
+        raise RuntimeError("No test_ function found in generated code")
+    return fns[0]
+
+def _auto_login(drv):
+    if not LOGIN_EMAIL or not LOGIN_PASSWORD:
+        return
+    from appium.webdriver.common.appiumby import AppiumBy
+    email_ids = ["emailTextField", "email_field", "usernameField", "email"]
+    pwd_ids = ["passwordTextField", "password_field", "passwordField", "password"]
+    btn_ids = ["loginButton", "login_button", "signInButton", "Log in"]
+    for fid in email_ids:
+        try:
+            el = drv.find_element(AppiumBy.ACCESSIBILITY_ID, fid)
+            if el.is_displayed():
+                el.clear()
+                el.send_keys(LOGIN_EMAIL)
+                for pid in pwd_ids:
+                    try:
+                        pf = drv.find_element(AppiumBy.ACCESSIBILITY_ID, pid)
+                        if pf.is_displayed():
+                            pf.clear()
+                            pf.send_keys(LOGIN_PASSWORD)
+                            break
+                    except Exception:
+                        continue
+                for bid in btn_ids:
+                    try:
+                        btn = drv.find_element(AppiumBy.ACCESSIBILITY_ID, bid)
+                        if btn.is_displayed():
+                            btn.click()
+                            _time.sleep(3)
+                            return
+                    except Exception:
+                        continue
+                return
+        except Exception:
+            continue
+
+start  = _time.time()
+driver = None
+try:
+    test_fn = _load_test_fn(TEST_FILE)
+
+    options = XCUITestOptions()
+    options.bundle_id = BUNDLE_ID
+    if DEVICE_UDID:
+        options.udid = DEVICE_UDID
+    options.automation_name = "XCUITest"
+    options.no_reset = True
+
+    driver = appium_webdriver.Remote(SERVER_URL, options=options)
+
+    # Reset app to home screen before every test
+    driver.terminate_app(BUNDLE_ID)
+    _time.sleep(1)
+    driver.activate_app(BUNDLE_ID)
+    _time.sleep(2)
+
+    # Auto-login if login screen is detected
+    _auto_login(driver)
+
+    _old_stdout = sys.stdout
+    sys.stdout  = io.StringIO()
+    try:
+        test_fn(driver)
+        _test_logs = sys.stdout.getvalue()
+    finally:
+        sys.stdout = _old_stdout
+
+    duration = _time.time() - start
+    print(json.dumps({{"success": True, "error": None, "logs": _test_logs, "duration": round(duration, 2)}}))
+    sys.exit(0)
+
+except AssertionError as e:
+    duration = _time.time() - start
+    screenshot_path = None
+    if driver:
+        try:
+            ss_path = TEST_FILE.replace(".py", "_failure.png")
+            driver.save_screenshot(ss_path)
+            screenshot_path = ss_path
+        except Exception:
+            pass
+    print(json.dumps({{
+        "success": False,
+        "error": f"Assertion failed: {{e}}",
+        "logs": traceback.format_exc(),
+        "duration": round(duration, 2),
+        "screenshot": screenshot_path,
+    }}))
+    sys.exit(1)
+
+except Exception as e:
+    duration = _time.time() - start
+    print(json.dumps({{
+        "success": False,
+        "error": f"{{type(e).__name__}}: {{e}}",
+        "logs": traceback.format_exc(),
+        "duration": round(duration, 2),
+    }}))
+    sys.exit(2)
+
+finally:
+    if driver:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+"""
+
+
+class AppiumTestRunner:
+    """Runs Appium Python tests in isolated subprocesses with timeout enforcement."""
+
+    def __init__(
+        self,
+        recordings_dir: Path,
+        bundle_id: str = "",
+        server_url: str = "http://localhost:4723",
+        test_timeout: int = 120,
+    ):
         self.recordings_dir = Path(recordings_dir)
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
-        self.xcode_project = xcode_project
-        self.xcode_scheme = xcode_scheme
-        self.xcode_ui_test_target = xcode_ui_test_target
-    
-    def _is_udid(self, device_str: str) -> bool:
-        """Check if string is a valid UDID (UUID format)"""
-        return len(device_str) == 36 and device_str.count('-') == 4
-    
+        self.bundle_id = bundle_id
+        self.server_url = server_url
+        self.test_timeout = test_timeout
+
     async def run_test(
         self,
         test_code: str,
-        app_name: str = "YourApp",
-        device: str = "iPhone 15 Pro",
-        ios_version: str = "17.0"
+        bundle_id: Optional[str] = None,
+        device_udid: str = "",
+        record_video: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Run a test in the simulator and record video.
-        
-        Args:
-            test_code: Swift XCUITest code
-            app_name: Name of the app to test
-            device: Simulator device name OR UDID (if it's a valid UUID)
-            ios_version: iOS version
-            
-        Returns:
-            Dict with test results, video path, logs
-        """
+        """Run a generated Python Appium test in an isolated subprocess."""
         test_id = str(uuid.uuid4())
-        video_path = self.recordings_dir / f"{test_id}.mp4"
+        effective_bundle_id = bundle_id or self.bundle_id
 
-        logger.info(f"=== Starting test run {test_id} ===")
-        logger.info(f"  Device: {device}, iOS: {ios_version}, App: {app_name}")
-        logger.info(f"  Xcode project: {self.xcode_project}")
-        logger.info(f"  Scheme: {self.xcode_scheme}, UI test target: {self.xcode_ui_test_target}")
-        logger.info(f"  Test code length: {len(test_code)} chars")
-
-        try:
-            # 1. Create temporary test file
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                suffix='.swift',
-                delete=False,
-                dir=tempfile.gettempdir()
-            ) as f:
-                f.write(test_code)
-                test_file_path = f.name
-            logger.info(f"  Temp test file: {test_file_path}")
-
-            # 2. Get simulator UDID (or use if already a UDID)
-            if self._is_udid(device):
-                device_id = device
-                logger.info(f"Using device UDID directly: {device_id}")
-            else:
-                logger.info(f"Looking up simulator UDID for '{device}' (iOS {ios_version})")
-                device_id = await self._get_simulator_udid(device, ios_version)
-                if not device_id:
-                    logger.error(f"Simulator not found: '{device}' (iOS {ios_version})")
-                    return {
-                        "success": False,
-                        "error": f"Simulator '{device} ({ios_version})' not found",
-                        "test_id": test_id
-                    }
-            
-            # 3. Boot simulator
-            await self._boot_simulator(device_id)
-
-            # 4. Ensure Simulator app is open (required for video recording)
-            await self._bring_simulator_to_front(device_id)
-            # Extra wait for Simulator GUI to fully connect
-            await asyncio.sleep(3)
-
-            # 5. Start video recording (non-fatal if it fails)
-            recording_process = None
-            try:
-                recording_process = await self._start_recording(device_id, video_path)
-            except Exception as e:
-                logger.warning(f"Video recording failed to start (continuing without): {e}")
-
-            # 6. Run the test
-            test_result = await self._execute_test(test_file_path, device_id, app_name)
-
-            # 7. Stop recording
-            if recording_process:
-                await self._stop_recording(recording_process)
-
-            # 8. Verify video file exists and has content
-            video_ready = False
-            if video_path.exists():
-                file_size = video_path.stat().st_size
-                if file_size > 0:
-                    logger.info(f"Video file created successfully: {file_size} bytes")
-                    video_ready = True
-                else:
-                    logger.warning(f"Video file exists but is empty: {video_path}")
-            else:
-                logger.info("No video file (recording was skipped or failed)")
-            
-            # 9. Clean up temp file
-            os.unlink(test_file_path)
-            
+        if not effective_bundle_id:
             return {
-                "success": test_result["success"],
+                "success": False,
                 "test_id": test_id,
+                "error": "bundle_id is required. Set BUNDLE_ID in .env or pass it in the request.",
+                "logs": "",
+                "duration": 0,
+            }
+
+        # Pre-check: is Appium server reachable?
+        if not await self._is_server_running():
+            return {
+                "success": False,
+                "test_id": test_id,
+                "error": f"Appium server not reachable at {self.server_url}. Start it with: appium",
+                "logs": "",
+                "duration": 0,
+            }
+
+        logger.info("=== Appium test run %s ===", test_id)
+        logger.info("  bundle_id=%s  udid=%s  server=%s", effective_bundle_id, device_udid or "auto", self.server_url)
+
+        run_dir  = Path(tempfile.mkdtemp(prefix=f"testara_{test_id}_"))
+        test_file    = run_dir / "test_generated.py"
+        harness_file = run_dir / "harness.py"
+        video_path   = self.recordings_dir / f"{test_id}.mp4"
+
+        try:
+            test_file.write_text(test_code)
+            from app.core.config import settings
+            harness_src = _HARNESS_TEMPLATE.format(
+                test_file=str(test_file),
+                bundle_id=effective_bundle_id,
+                device_udid=device_udid,
+                server_url=self.server_url,
+                login_email=settings.test_credentials_email or "",
+                login_password=settings.test_credentials_password or "",
+            )
+            harness_file.write_text(harness_src)
+
+            recording_proc = None
+            if record_video:
+                recording_proc = await self._start_recording(device_udid, video_path)
+
+            result = await self._run_harness(harness_file)
+
+            if recording_proc:
+                await self._stop_recording(recording_proc)
+
+            video_ready = record_video and video_path.exists() and video_path.stat().st_size > 0
+
+            # Copy failure screenshot to recordings dir so it persists after temp cleanup
+            screenshot_name = None
+            raw_screenshot = result.get("screenshot")
+            if raw_screenshot and Path(raw_screenshot).exists():
+                screenshot_name = f"{test_id}_failure.png"
+                import shutil as _shutil
+                _shutil.copy2(raw_screenshot, self.recordings_dir / screenshot_name)
+
+            return {
+                "test_id":    test_id,
+                "success":    result.get("success", False),
+                "logs":       result.get("logs", ""),
+                "duration":   result.get("duration", 0),
+                "error":      result.get("error"),
+                "screenshot": screenshot_name,
                 "video_path": str(video_path.name) if video_ready else None,
-                "logs": test_result.get("logs", ""),
-                "duration": test_result.get("duration", 0),
-                "device": device,
-                "ios_version": ios_version
             }
-            
-        except Exception as e:
-            logger.error(f"Test execution failed: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "test_id": test_id
-            }
-    
-    async def _get_simulator_udid(self, device: str, ios_version: str) -> Optional[str]:
-        """Get simulator UDID for the specified device and iOS version"""
-        try:
-            result = await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'list', 'devices', 'available',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await result.communicate()
-            
-            # Parse output to find matching device
-            output = stdout.decode()
-            lines = output.split('\n')
-            
-            current_runtime = None
-            for line in lines:
-                if '-- iOS' in line or '-- com.apple.CoreSimulator.SimRuntime.iOS' in line:
-                    # Extract iOS version from runtime line
-                    if ios_version.replace('.', '-') in line:
-                        current_runtime = ios_version
-                elif current_runtime and device in line and '(Booted)' not in line:
-                    # Extract UDID from device line
-                    if '(' in line and ')' in line:
-                        udid = line.split('(')[1].split(')')[0]
-                        if len(udid) == 36:  # UUID format
-                            return udid
-            
-            # Fallback: get any available device
-            result = await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'list', 'devices', 'available', '--json',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await result.communicate()
-            
-            import json
-            data = json.loads(stdout.decode())
-            
-            for runtime, devices in data.get('devices', {}).items():
-                for dev in devices:
-                    if device in dev.get('name', '') and dev.get('isAvailable'):
-                        return dev['udid']
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to get simulator UDID: {e}")
-            return None
-    
-    async def _boot_simulator(self, device_id: str):
-        """Boot the simulator if not already booted"""
-        try:
-            # Check current state of all simulators
-            result = await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'list', 'devices', '--json',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await result.communicate()
 
-            import json
+        except Exception as e:
+            logger.error("Test run %s failed: %s", test_id, e, exc_info=True)
+            return {"test_id": test_id, "success": False, "error": str(e), "logs": "", "duration": 0}
+
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    async def _is_server_running(self) -> bool:
+        """Quick health check against Appium /status endpoint."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.server_url}/status", timeout=aiohttp.ClientTimeout(total=3)
+                ) as resp:
+                    return resp.status == 200
+        except Exception:
+            return False
+
+    async def _run_harness(self, harness_file: Path) -> Dict[str, Any]:
+        """Run harness.py as subprocess, parse JSON from stdout."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python", str(harness_file),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             try:
-                data = json.loads(stdout.decode())
-                # Find our device and log its state
-                for runtime, devices in data.get('devices', {}).items():
-                    for dev in devices:
-                        if dev.get('udid') == device_id:
-                            logger.info(f"Simulator state: name={dev.get('name')}, "
-                                        f"state={dev.get('state')}, "
-                                        f"runtime={runtime}, "
-                                        f"available={dev.get('isAvailable')}")
-                            if dev.get('state') == 'Booted':
-                                logger.info(f"Simulator {device_id} already booted")
-                                return
-                            break
-            except json.JSONDecodeError:
-                logger.warning("Could not parse simctl JSON, falling back to text check")
-                output = stdout.decode()
-                if '(Booted)' in output and device_id in output:
-                    logger.info(f"Simulator {device_id} already booted (text check)")
-                    return
-
-            # Boot simulator
-            logger.info(f"Booting simulator {device_id}...")
-            result = await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'boot', device_id,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await result.communicate()
-            if result.returncode != 0:
-                err = stderr.decode()
-                if 'Unable to boot device in current state: Booted' in err:
-                    logger.info("Simulator was already booted (race condition)")
-                else:
-                    logger.error(f"simctl boot failed (rc={result.returncode}): {err}")
-                    raise RuntimeError(f"Failed to boot simulator: {err}")
-            else:
-                logger.info("simctl boot succeeded, waiting for startup...")
-
-            # Wait for boot to complete
-            await asyncio.sleep(3)
-            logger.info("Simulator boot wait complete")
-
-            # Force English locale on the simulator to prevent keyboard language switching
-            for key, value in [("AppleLanguages", "-array en"), ("AppleLocale", "-string en_US")]:
-                await asyncio.create_subprocess_exec(
-                    'xcrun', 'simctl', 'spawn', device_id,
-                    'defaults', 'write', 'com.apple.Preferences', key, *value.split(),
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=self.test_timeout
                 )
+            except asyncio.TimeoutError:
+                logger.error("Harness timed out after %ds", self.test_timeout)
+                proc.kill()
+                await proc.wait()
+                return {"success": False, "error": f"Test timed out after {self.test_timeout}s", "logs": "", "duration": self.test_timeout}
 
-        except Exception as e:
-            logger.error(f"Failed to boot simulator: {e}", exc_info=True)
-            raise
-    
-    async def _start_recording(self, device_id: str, output_path: Path):
-        """Start video recording of the simulator"""
-        try:
-            logger.info(f"Starting video recording to {output_path}")
-            process = await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'io', device_id, 'recordVideo',
-                str(output_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            # Give recording time to start
-            await asyncio.sleep(2)
-            
-            # Check if process is still running
-            if process.returncode is not None:
-                stdout, stderr = await process.communicate()
-                logger.error(f"Recording failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}")
-                raise RuntimeError(f"Recording process exited immediately: {stderr.decode()}")
-            
-            logger.info("Recording process started successfully")
-            return process
-            
-        except Exception as e:
-            logger.error(f"Failed to start recording: {e}")
-            raise
-    
-    async def _stop_recording(self, process):
-        """Stop video recording. Must use SIGINT so simctl finalizes the file."""
-        try:
-            if process and process.returncode is None:
-                logger.info("Stopping video recording with SIGINT")
-                process.send_signal(signal.SIGINT)
+            raw_stdout = stdout.decode(errors="replace").strip()
+            raw_stderr = stderr.decode(errors="replace").strip()
+            if raw_stderr:
+                logger.debug("Harness stderr:\n%s", raw_stderr)
 
-                # Wait for process to finalize the video
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=10.0)
-                except asyncio.TimeoutError:
-                    logger.warning("Recording process didn't terminate, killing it")
-                    process.kill()
-                    await process.wait()
-
-                # Give extra time for file to be fully written
-                await asyncio.sleep(1)
-                logger.info("Recording process terminated, file should be ready")
-                
-        except Exception as e:
-            logger.error(f"Failed to stop recording: {e}")
-    
-    def _extract_class_name(self, test_code: str) -> Optional[str]:
-        """Extract the XCTestCase class name from Swift code."""
-        match = re.search(r'(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase', test_code)
-        return match.group(1) if match else None
-
-    async def _terminate_running_apps(self, device_id: str):
-        """Terminate user apps on the simulator to ensure a clean state before testing."""
-        try:
-            logger.info("Terminating running apps on simulator for clean state...")
-            # Get the bundle ID from the Xcode project's build settings
-            proc = await asyncio.create_subprocess_exec(
-                'xcodebuild', '-project', self.xcode_project,
-                '-scheme', self.xcode_scheme,
-                '-showBuildSettings',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            output = stdout.decode(errors='replace')
-
-            bundle_id = None
-            for line in output.splitlines():
-                if 'PRODUCT_BUNDLE_IDENTIFIER' in line:
-                    bundle_id = line.split('=', 1)[1].strip()
-                    break
-
-            if bundle_id:
-                logger.info(f"Terminating app with bundle ID: {bundle_id}")
-                proc = await asyncio.create_subprocess_exec(
-                    'xcrun', 'simctl', 'terminate', device_id, bundle_id,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await proc.communicate()
-                # Small delay to let the app fully terminate
-                await asyncio.sleep(1)
-            else:
-                logger.warning("Could not determine bundle ID, skipping app termination")
-        except Exception as e:
-            logger.warning(f"Failed to terminate running apps (non-fatal): {e}")
-
-    async def _bring_simulator_to_front(self, device_id: str):
-        """Bring the Simulator app to the foreground (needed for video recording)."""
-        try:
-            logger.info(f"Bringing simulator {device_id} to foreground...")
-            proc = await asyncio.create_subprocess_exec(
-                'open', '-a', 'Simulator', '--args', '-CurrentDeviceUDID', device_id,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.warning(f"open -a Simulator returned {proc.returncode}: {stderr.decode()}")
-            await asyncio.sleep(1)
-
-            proc = await asyncio.create_subprocess_exec(
-                'osascript', '-e', 'tell application "Simulator" to activate',
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.warning(f"osascript activate returned {proc.returncode}: {stderr.decode()}")
-            await asyncio.sleep(1)
-            logger.info("Simulator brought to foreground")
-        except Exception as e:
-            logger.warning(f"Could not bring simulator to front: {e}")
-
-    async def _ensure_no_wda(self, device_id: str):
-        """Kill any lingering WDA processes before test execution (defense-in-depth)."""
-        proc = await asyncio.create_subprocess_exec(
-            'pgrep', '-f', 'WebDriverAgent',
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if stdout.strip():
-            pids = stdout.decode().strip().split('\n')
-            logger.warning(
-                "Found %d lingering WDA process(es) before test execution, force-killing...",
-                len(pids),
-            )
-            for pid in pids:
-                await asyncio.create_subprocess_exec(
-                    'kill', '-9', pid.strip(),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            await asyncio.create_subprocess_exec(
-                'xcrun', 'simctl', 'terminate', device_id,
-                'com.facebook.WebDriverAgentRunner.xctrunner',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.sleep(2)  # Let testmanagerd release
-            logger.info("Lingering WDA processes killed, testmanagerd should be free")
-        else:
-            logger.info("No WDA processes found — testmanagerd is clear")
-
-    async def _build_for_testing(self, device_id: str) -> tuple:
-        """Run xcodebuild build-for-testing (incremental)."""
-        cmd = [
-            'xcodebuild', 'build-for-testing',
-            '-project', self.xcode_project,
-            '-scheme', self.xcode_scheme,
-            '-destination', f'platform=iOS Simulator,id={device_id}',
-            '-quiet',
-        ]
-        test_plan = os.environ.get('XCODE_TEST_PLAN')
-        if test_plan:
-            cmd.insert(-1, '-testPlan')
-            cmd.insert(-1, test_plan)
-        logger.info(f"Build command: {' '.join(cmd)}")
-        build_start = time.time()
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=180)
-        except asyncio.TimeoutError:
-            process.kill()
-            logger.error("Build timed out after 3 minutes")
-            return False, "Build timed out after 3 minutes"
-        output = stdout.decode(errors='replace')
-        build_duration = time.time() - build_start
-        logger.info(f"Build finished in {build_duration:.1f}s, returncode={process.returncode}")
-        if process.returncode != 0:
-            logger.error(f"Build failed output (last 1000 chars): {output[-1000:]}")
-        return process.returncode == 0, output
-
-    async def _execute_test(
-        self,
-        test_file: str,
-        device_id: str,
-        app_name: str
-    ) -> Dict[str, Any]:
-        """Execute XCUITest code on the simulator using xcodebuild."""
-        start_time = time.time()
-
-        if not self.xcode_project:
-            return {
-                "success": False,
-                "logs": "XCODE_PROJECT not configured. Set it in .env.",
-                "duration": 0,
-            }
-
-        project_path = Path(self.xcode_project)
-        if not project_path.exists():
-            return {
-                "success": False,
-                "logs": f"Xcode project not found: {self.xcode_project}",
-                "duration": 0,
-            }
-
-        # Read the test code to extract class name and method name
-        with open(test_file) as f:
-            test_code = f.read()
-
-        class_name = self._extract_class_name(test_code)
-        if not class_name:
-            logger.error(f"Could not extract XCTestCase class name from code:\n{test_code[:500]}")
-            return {
-                "success": False,
-                "logs": "Could not extract XCTestCase class name from generated code",
-                "duration": 0,
-            }
-
-        test_method = self._extract_test_method(test_code)
-        logger.info(f"Extracted class={class_name}, method={test_method}")
-
-        # Write to LLMGeneratedTest.swift — the file already included in the Xcode target
-        ui_tests_dir = project_path.parent / self.xcode_ui_test_target
-        dest_file = ui_tests_dir / "LLMGeneratedTest.swift"
-        logger.info(f"Writing test to {dest_file}")
-        logger.info(f"UI tests dir exists: {ui_tests_dir.exists()}, contents: {list(ui_tests_dir.iterdir()) if ui_tests_dir.exists() else 'N/A'}")
-        dest_file.write_text(test_code)
-        logger.info(f"Test file written: {dest_file.stat().st_size} bytes")
-
-        try:
-            # Step 0: Terminate any running app to ensure clean state
-            await self._terminate_running_apps(device_id)
-
-            # Step 1: Build for testing (incremental)
-            logger.info("Building project for testing...")
-            build_ok, build_output = await self._build_for_testing(device_id)
-            if not build_ok:
-                logger.error("Build failed")
+            try:
+                return json.loads(raw_stdout)
+            except (json.JSONDecodeError, ValueError):
+                logger.error("Harness non-JSON stdout: %r", raw_stdout[:500])
                 return {
                     "success": False,
-                    "logs": f"BUILD FAILED:\n{build_output[-3000:]}",
-                    "duration": time.time() - start_time,
+                    "error": raw_stderr or "Harness crashed before producing output",
+                    "logs": raw_stdout,
+                    "duration": 0,
+                    "exit_code": proc.returncode,
                 }
-            logger.info("Build succeeded")
-
-            # Step 2: Ensure no WDA processes block testmanagerd
-            await self._ensure_no_wda(device_id)
-
-            # Step 3: Bring simulator to front for video capture
-            await self._bring_simulator_to_front(device_id)
-
-            # Step 4: Run the test
-            only_testing = f'{self.xcode_ui_test_target}/{class_name}'
-            if test_method:
-                only_testing += f'/{test_method}'
-
-            cmd = [
-                'xcodebuild', 'test-without-building',
-                '-project', self.xcode_project,
-                '-scheme', self.xcode_scheme,
-                '-destination', f'id={device_id}',
-                f'-only-testing:{only_testing}',
-                '-parallel-testing-enabled', 'NO',
-                '-maximum-concurrent-test-simulator-destinations', '1',
-                '-testLanguage', 'en',
-                '-testRegion', 'en_US',
-            ]
-            test_plan = os.environ.get('XCODE_TEST_PLAN')
-            if test_plan:
-                cmd.extend(['-testPlan', test_plan])
-
-            logger.info(f"Running: {' '.join(cmd)}")
-
-            # Force unbuffered I/O so xcodebuild flushes output immediately
-            # (piped stdout causes full buffering by default, hiding test progress)
-            env = os.environ.copy()
-            env["NSUnbufferedIO"] = "YES"
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=env,
-            )
-
-            # Progressive output reading with diagnostic logging
-            output_chunks = []
-            test_timeout = 300
-            test_start = time.time()
-            stuck_warned = False
-
-            try:
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(
-                            process.stdout.read(4096), timeout=30
-                        )
-                    except asyncio.TimeoutError:
-                        elapsed = time.time() - test_start
-                        if elapsed > test_timeout:
-                            logger.error("Test execution timed out after %.0fs", elapsed)
-                            process.kill()
-                            await process.wait()
-                            collected = b"".join(output_chunks).decode(errors="replace")
-                            return {
-                                "success": False,
-                                "logs": f"Test execution timed out after 5 minutes\n\n{collected[-3000:]}",
-                                "duration": time.time() - start_time,
-                            }
-                        logger.info("Test still running after %.0fs (no output for 30s)...", elapsed)
-                        continue
-
-                    if not chunk:
-                        break  # EOF — process finished
-
-                    output_chunks.append(chunk)
-                    text = chunk.decode(errors="replace")
-
-                    # Detect testmanagerd connection issues
-                    if not stuck_warned and (
-                        "Waiting for" in text
-                        or "DTServiceHub" in text
-                        or "testmanagerd" in text
-                    ):
-                        logger.warning(
-                            "xcodebuild may be stuck connecting to testmanagerd: %s",
-                            text.strip()[:200],
-                        )
-                        stuck_warned = True
-
-            except Exception as read_err:
-                logger.error("Error reading xcodebuild output: %s", read_err)
-
-            await process.wait()
-            logs = b"".join(output_chunks).decode(errors="replace")
-            duration = time.time() - start_time
-
-            success = '** TEST SUCCEEDED **' in logs or '** TEST EXECUTE SUCCEEDED **' in logs
-            if '** TEST FAILED **' in logs or '** TEST EXECUTE FAILED **' in logs:
-                success = False
-
-            logger.info(f"Test {'PASSED' if success else 'FAILED'} in {duration:.1f}s")
-            logger.info(f"xcodebuild returncode={process.returncode}")
-            # Log last 500 chars of output for quick debugging
-            logger.debug(f"Test output tail:\n{logs[-500:]}")
-
-            return {
-                "success": success,
-                "logs": logs[-5000:],
-                "duration": duration,
-            }
-
         except Exception as e:
-            logger.error(f"Test execution failed: {e}")
-            return {
-                "success": False,
-                "logs": str(e),
-                "duration": time.time() - start_time,
-            }
+            return {"success": False, "error": str(e), "logs": "", "duration": 0}
 
-    @staticmethod
-    def _extract_test_method(test_code: str) -> Optional[str]:
-        """Extract the test method name from Swift code."""
-        match = re.search(r'func (test\w+)\(\)\s*(?:async\s+)?(?:throws\s*)?', test_code)
-        return match.group(1) if match else None
+    async def _start_recording(self, device_udid: str, output_path: Path) -> Optional[Any]:
+        if not device_udid:
+            logger.warning("No device_udid — skipping video recording")
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "xcrun", "simctl", "io", device_udid, "recordVideo", str(output_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.sleep(2)
+            if proc.returncode is not None:
+                logger.warning("Recording process exited early")
+                return None
+            logger.info("Video recording started → %s", output_path)
+            return proc
+        except Exception as e:
+            logger.warning("Could not start video recording: %s", e)
+            return None
+
+    async def _stop_recording(self, proc) -> None:
+        try:
+            if proc and proc.returncode is None:
+                proc.send_signal(signal.SIGINT)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.warning("Error stopping recording: %s", e)
+
+
+# Backwards-compat alias
+TestRunner = AppiumTestRunner

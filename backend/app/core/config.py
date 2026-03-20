@@ -1,6 +1,5 @@
 """Configuration settings using Pydantic BaseSettings"""
 import logging
-import re
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -9,59 +8,6 @@ logger = logging.getLogger(__name__)
 
 # Resolve .env relative to project root (two levels up from this file)
 _ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
-
-
-def _find_xcodeproj(project_root: str) -> str:
-    """Auto-detect .xcodeproj inside PROJECT_ROOT (excluding Pods)."""
-    if not project_root:
-        return ""
-    matches = [
-        p for p in Path(project_root).glob("*.xcodeproj")
-        if "Pods.xcodeproj" not in str(p)
-    ]
-    if matches:
-        logger.info(f"Auto-detected Xcode project: {matches[0]}")
-        return str(matches[0])
-    return ""
-
-
-def _infer_scheme(xcodeproj: str) -> str:
-    """Find the main app scheme from xcshareddata."""
-    if not xcodeproj:
-        return ""
-    project_name = Path(xcodeproj).stem
-    schemes_dir = Path(xcodeproj) / "xcshareddata" / "xcschemes"
-    if schemes_dir.exists():
-        # Prefer scheme matching project name
-        exact = schemes_dir / f"{project_name}.xcscheme"
-        if exact.exists():
-            return project_name
-        # Fallback: first non-test scheme
-        for s in schemes_dir.glob("*.xcscheme"):
-            if "Test" not in s.stem:
-                return s.stem
-    return project_name  # default assumption
-
-
-def _find_ui_test_target(xcodeproj: str) -> str:
-    """Find actual UI test target name from project.pbxproj."""
-    if not xcodeproj:
-        return ""
-    pbxproj_path = Path(xcodeproj) / "project.pbxproj"
-    if not pbxproj_path.exists():
-        return Path(xcodeproj).stem + "UITests"
-    try:
-        lines = pbxproj_path.read_text().splitlines()
-        for i, line in enumerate(lines):
-            if 'product-type.bundle.ui-testing' in line:
-                # Walk backwards to find the target block header
-                for j in range(i - 1, max(i - 50, 0), -1):
-                    m = re.match(r'\s*\w+\s*/\*\s*(.+?)\s*\*/\s*=\s*\{', lines[j])
-                    if m:
-                        return m.group(1)
-    except Exception as e:
-        logger.warning(f"Could not parse pbxproj for UI test target: {e}")
-    return Path(xcodeproj).stem + "UITests"
 
 
 class Settings(BaseSettings):
@@ -83,25 +29,19 @@ class Settings(BaseSettings):
     # App identity used as fallback when the RAG route doesn't receive one
     default_app_name: str = "SampleApp"
 
-    # Xcode project path for running tests (auto-detected from PROJECT_ROOT if empty)
-    xcode_project: str = ""
-    xcode_scheme: str = ""
-    xcode_ui_test_target: str = ""
+    # App bundle ID for Appium test execution
+    bundle_id: str = ""
 
     # Appium discovery settings
     appium_enabled: bool = False
     appium_server_url: str = "http://localhost:4723"
     appium_startup_timeout: int = 30
     appium_discovery_timeout: int = 60
+    appium_test_timeout: int = 120
 
-    # Test credentials: injected into prompt so LLM can generate login steps
+    # Test credentials for auto-login (used by discovery and test runner)
     test_credentials_email: str = ""
     test_credentials_password: str = ""
-
-    # Launch environment: key=value pairs passed to the app via launchEnvironment
-    # Use this to disable heavy SDKs (Sentry, Firebase, etc.) that cause main thread stalls
-    # Format: "KEY1=VALUE1,KEY2=VALUE2"  e.g. "EMERGE_IS_RUNNING_FOR_SNAPSHOTS=1,DISABLE_ANALYTICS=1"
-    launch_environment: str = ""
 
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
@@ -115,11 +55,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-# Auto-detect Xcode settings from PROJECT_ROOT when not explicitly set
-if not settings.xcode_project:
-    settings.xcode_project = _find_xcodeproj(settings.project_root)
-if not settings.xcode_scheme:
-    settings.xcode_scheme = _infer_scheme(settings.xcode_project)
-if not settings.xcode_ui_test_target:
-    settings.xcode_ui_test_target = _find_ui_test_target(settings.xcode_project)

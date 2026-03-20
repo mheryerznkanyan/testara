@@ -12,7 +12,6 @@ from app.core.config import settings
 from app.services.enrichment_service import EnrichmentService
 from app.services.test_generator import TestGenerator
 from app.services.rag_service import RAGService
-from app.services.test_runner import TestRunner
 from app.api.routes import health, tests, execution, simulators, discovery
 
 logging.basicConfig(
@@ -47,14 +46,16 @@ async def lifespan(app: FastAPI):
     app.state.rag_service = RAGService(settings=settings)
     app.state.enrichment_service = EnrichmentService(llm=llm)
     
-    # Initialize test runner with recordings directory
+    # Initialize Appium test runner (lazy — Appium server may not be running at startup)
     recordings_dir = Path(__file__).parent.parent / "recordings"
-    app.state.test_runner = TestRunner(
+    from app.services.test_runner import AppiumTestRunner
+    app.state.test_runner = AppiumTestRunner(
         recordings_dir=recordings_dir,
-        xcode_project=settings.xcode_project,
-        xcode_scheme=settings.xcode_scheme,
-        xcode_ui_test_target=settings.xcode_ui_test_target,
+        bundle_id=settings.bundle_id,
+        server_url=settings.appium_server_url,
+        test_timeout=settings.appium_test_timeout,
     )
+    logger.info("AppiumTestRunner initialized (server: %s)", settings.appium_server_url)
     
     # Appium discovery service (optional)
     from app.services.appium_discovery_service import AppiumDiscoveryService

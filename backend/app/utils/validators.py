@@ -1,4 +1,5 @@
 """Validation and prompt-building utilities"""
+import ast
 from typing import Optional, Dict, List
 
 from app.schemas.test_schemas import AppContext
@@ -42,20 +43,33 @@ def build_class_name_section(class_name: Optional[str]) -> str:
     )
 
 
-def validate_xcuitest_contract(swift_code: str) -> Dict[str, bool]:
-    """Validate that the generated XCUITest code meets required standards"""
+def validate_appium_contract(python_code: str) -> Dict[str, bool]:
+    """Validate that generated Python Appium test code meets required standards."""
+    try:
+        tree = ast.parse(python_code)
+    except SyntaxError:
+        return {
+            "syntax_valid": False,
+            "has_driver_param": False,
+            "has_appium_by": False,
+            "has_assertion": False,
+            "no_remote_creation": False,
+        }
+
+    test_fns = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    ]
+
+    has_driver_param = any(
+        any(arg.arg == "driver" for arg in fn.args.args)
+        for fn in test_fns
+    )
+
     return {
-        "has_xcuiapplication": "XCUIApplication()" in swift_code,
-        "has_app_launch": "app.launch()" in swift_code,
-        "has_wait_for_existence": (
-            "waitForExistence(timeout:" in swift_code
-            or "XCTNSPredicateExpectation" in swift_code
-        ),
-        "has_assertions": any(
-            x in swift_code
-            for x in ["XCTAssertTrue", "XCTAssertEqual", "XCTAssertFalse", "XCTAssertNotNil"]
-        ),
-        "has_setup_teardown": (
-            "setUpWithError" in swift_code and "tearDownWithError" in swift_code
-        ),
+        "syntax_valid": True,
+        "has_driver_param": has_driver_param,
+        "has_appium_by": "AppiumBy" in python_code,
+        "has_assertion": "assert " in python_code,
+        "no_remote_creation": "webdriver.Remote" not in python_code,
     }

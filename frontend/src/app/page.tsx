@@ -8,7 +8,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 /* ─────────────────────────── types ─────────────────────────── */
 
 interface TestResult {
-  swift_code: string
+  test_code: string
   test_type: string
   class_name: string
   metadata?: {
@@ -29,6 +29,7 @@ interface ExecutionResult {
   success: boolean
   test_id: string
   video_url: string | null
+  screenshot: string | null
   logs: string
   duration: number
   device: string
@@ -41,11 +42,9 @@ type ResultTab = 'code' | 'quality' | 'enrichment'
 /* ─────────────────────────── helpers ───────────────────────── */
 
 const EXAMPLES = [
-  'Open the app and verify the main screen loads correctly',
-  'Navigate through all tabs and check each one displays content',
-  'Tap on the first item in the list and verify the detail screen opens',
-  'Test pull to refresh on the main screen',
-  'Open settings and toggle a switch, then verify it stays on',
+  'Test login with valid credentials navigates to home screen',
+  'Verify signup form validation shows errors for invalid email',
+  'Test settings screen toggle switches persist after app restart',
 ]
 
 const Spinner = () => (
@@ -98,7 +97,6 @@ export default function TestGenerator() {
     appName: 'YourApp',
     bundleId: '',
   })
-  const [appiumEnabled, setAppiumEnabled] = useState(false)
 
   const resultsRef = useRef<HTMLDivElement>(null)
   const executionRef = useRef<HTMLDivElement>(null)
@@ -121,10 +119,6 @@ export default function TestGenerator() {
 
   useEffect(() => {
     loadSettings()
-    fetch('http://localhost:8000/health')
-      .then(r => r.json())
-      .then(data => setAppiumEnabled(!!data.appium_enabled))
-      .catch(() => {})
     const onVisibility = () => { if (!document.hidden) loadSettings() }
     const onStorage = (e: StorageEvent) => { if (e.key === 'testara_settings') loadSettings() }
     document.addEventListener('visibilitychange', onVisibility)
@@ -156,7 +150,7 @@ export default function TestGenerator() {
           test_description: description,
           test_type: 'ui',
           include_comments: true,
-          discovery_enabled: appiumEnabled && !!settings.bundleId && !!settings.deviceUdid,
+          discovery_enabled: true,
           bundle_id: settings.bundleId || undefined,
           device_udid: settings.deviceUdid || undefined,
         }),
@@ -183,7 +177,7 @@ export default function TestGenerator() {
   /* ── copy ── */
   const handleCopy = () => {
     if (!result) return
-    navigator.clipboard.writeText(result.swift_code)
+    navigator.clipboard.writeText(result.test_code)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -195,17 +189,14 @@ export default function TestGenerator() {
     setError(null)
     setExecutionResult(null)
 
-    const deviceToUse = settings.deviceUdid || settings.deviceName
-
     try {
       const res = await fetch('http://localhost:8000/run-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          test_code: result.swift_code,
-          app_name: settings.appName,
-          device: deviceToUse,
-          ios_version: settings.iosVersion,
+          test_code: result.test_code,
+          bundle_id: settings.bundleId || undefined,
+          device_udid: settings.deviceUdid || '',
         }),
       })
       if (!res.ok) {
@@ -254,15 +245,6 @@ export default function TestGenerator() {
                 <span className="flex items-center gap-1 text-emerald-400">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
                   Physical device
-                </span>
-              </>
-            )}
-            {appiumEnabled && settings.bundleId && settings.deviceUdid && (
-              <>
-                <span className="opacity-30">·</span>
-                <span className="flex items-center gap-1 text-blue-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
-                  Appium discovery
                 </span>
               </>
             )}
@@ -472,11 +454,11 @@ export default function TestGenerator() {
                           </div>
                           <div className="rounded-xl overflow-hidden ring-1 ring-white/[0.06]">
                             <SyntaxHighlighter
-                              language="swift"
+                              language="python"
                               style={vscDarkPlus}
                               customStyle={{ margin: 0, borderRadius: '0.75rem', fontSize: '0.8125rem', lineHeight: '1.6' }}
                             >
-                              {result.swift_code}
+                              {result.test_code}
                             </SyntaxHighlighter>
                           </div>
                         </motion.div>
@@ -666,6 +648,20 @@ export default function TestGenerator() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     {executionResult.error}
+                  </div>
+                )}
+
+                {/* failure screenshot */}
+                {executionResult.screenshot && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/60">Failure Screenshot</p>
+                    <div className="rounded-xl overflow-hidden ring-1 ring-red-500/20 bg-black">
+                      <img
+                        src={`http://localhost:8000${executionResult.screenshot}`}
+                        alt="Failure screenshot"
+                        className="w-full h-auto object-contain max-h-[500px]"
+                      />
+                    </div>
                   </div>
                 )}
 
