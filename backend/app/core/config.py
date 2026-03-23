@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     rag_persist_dir: str = str(Path(__file__).resolve().parents[3] / "rag_store")
     rag_collection: str = "ios_app"
-    rag_embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    rag_embed_model: str = "BAAI/bge-base-en-v1.5"
     rag_top_k: int = 10
     port: int = 8000
     host: str = "0.0.0.0"

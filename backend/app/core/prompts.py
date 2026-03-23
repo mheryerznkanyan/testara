@@ -96,10 +96,11 @@ assert element is not None, "Element should be present"
 assert element.is_displayed(), "Element should be visible"
 
 COUNTING/VERIFICATION RULES:
-- When the user asks to verify a specific count (e.g. "must see 5 categories"), test EXACTLY that count.
-- Do NOT exclude or skip elements based on your own interpretation (e.g. "All is just a default, not a real category").
-- If the runtime tree shows specific named elements that are the items to count (e.g. "All", "Live", "Late pledge", "Upcoming", "Successful"), find each one by ACCESSIBILITY_ID and collect them into a list, then assert the count.
-- PREFER finding elements by their known ACCESSIBILITY_IDs from the runtime tree over generic XPath/class chain queries.
+- When the user asks to verify a specific count, test EXACTLY that count.
+- Do NOT exclude or skip elements based on your own interpretation.
+- NEVER use generic XPath or IOS_CLASS_CHAIN queries to count elements — these match unrelated elements and give wrong counts.
+- Instead, look at the runtime tree for the specific element names that belong to the group, find each one by ACCESSIBILITY_ID, collect into a list, and assert the count.
+- Get the element names from the runtime tree provided to you. Do NOT guess names.
 - Never rationalize away a mismatch — the test exists to catch exactly these discrepancies.
 
 STRICT FIDELITY:

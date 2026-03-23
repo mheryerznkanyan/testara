@@ -51,7 +51,7 @@ export default function SettingsPage() {
   
   const fetchSimulators = async () => {
     try {
-      const response = await fetch('http://localhost:8000/simulators')
+      const response = await fetch('/api/simulators')
       if (response.ok) {
         const data = await response.json()
         console.log('Fetched simulators:', data.devices)

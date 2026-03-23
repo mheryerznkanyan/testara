@@ -143,7 +143,7 @@ export default function TestGenerator() {
     setExecutionResult(null)
 
     try {
-      const res = await fetch('http://localhost:8000/generate-test-with-rag', {
+      const res = await fetch('/api/generate-test-with-rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -191,7 +191,7 @@ export default function TestGenerator() {
 
     try {
       const runTest = async (testCode: string) => {
-        const res = await fetch('http://localhost:8000/run-test', {
+        const res = await fetch('/api/run-test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -211,7 +211,7 @@ export default function TestGenerator() {
 
       // If execution error (not assertion failure) → regenerate with error, run once more
       if (!data.success && data.error && !data.error.startsWith('Assertion failed:')) {
-        const regenRes = await fetch('http://localhost:8000/generate-test-with-rag', {
+        const regenRes = await fetch('/api/generate-test-with-rag', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -641,7 +641,7 @@ export default function TestGenerator() {
                         controls
                         playsInline
                         className="absolute inset-0 w-full h-full object-contain"
-                        src={`http://localhost:8000${executionResult.video_url}`}
+                        src={`/api${executionResult.video_url}`}
                       />
                     </div>
                   </div>
@@ -682,7 +682,7 @@ export default function TestGenerator() {
                     <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/60">Failure Screenshot</p>
                     <div className="rounded-xl overflow-hidden ring-1 ring-red-500/20 bg-black">
                       <img
-                        src={`http://localhost:8000${executionResult.screenshot}`}
+                        src={`/api${executionResult.screenshot}`}
                         alt="Failure screenshot"
                         className="w-full h-auto object-contain max-h-[500px]"
                       />
