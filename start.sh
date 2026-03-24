@@ -164,6 +164,66 @@ cd ..
 sleep 2
 echo -e "${GREEN}✓${NC} Frontend running"
 
+# Auto-discovery (if no cache and Appium + bundle_id configured)
+DISCOVERY_CACHE="${RAG_PERSIST_DIR:-rag_store}/discovery_snapshot.json"
+if [ ! -f "$DISCOVERY_CACHE" ] && [ "$APPIUM_ENABLED" = "true" ] && [ -n "$BUNDLE_ID" ]; then
+    echo -e "\n${CYAN}${BOLD}Running App Discovery${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    # Auto-detect booted simulator
+    DEVICE_UDID=$(xcrun simctl list devices booted --json 2>/dev/null | $PYTHON -c "
+import sys, json
+data = json.load(sys.stdin)
+for rt, devs in data.get('devices', {}).items():
+    for d in devs:
+        if d.get('state') == 'Booted':
+            print(d['udid']); exit()
+" 2>/dev/null)
+
+    if [ -n "$DEVICE_UDID" ]; then
+        echo -e "${BLUE}►${NC} Discovering app screens (bundle: $BUNDLE_ID, device: $DEVICE_UDID)..."
+        DISC_RESULT=$(curl -s -X POST http://localhost:8000/discover \
+            -H "Content-Type: application/json" \
+            -d "{\"bundle_id\":\"$BUNDLE_ID\",\"device_udid\":\"$DEVICE_UDID\"}" 2>/dev/null)
+        DISC_OK=$(echo "$DISC_RESULT" | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null)
+        if [ "$DISC_OK" = "True" ]; then
+            ELEM_COUNT=$(echo "$DISC_RESULT" | $PYTHON -c "import sys,json; print(json.load(sys.stdin).get('interactive_count', 0))" 2>/dev/null)
+            echo -e "${GREEN}✓${NC} Discovery complete ($ELEM_COUNT interactive elements cached)"
+        else
+            echo -e "${YELLOW}⚠${NC}  Discovery failed (tests will use RAG context only)"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC}  No booted simulator found — skipping discovery"
+    fi
+elif [ -f "$DISCOVERY_CACHE" ]; then
+    echo -e "\n${GREEN}✓${NC} Discovery cache found (using cached app screens)"
+fi
+
+# Validation suite (run with --validate flag)
+if [ "$1" = "--validate" ] || [ "$2" = "--validate" ]; then
+    echo -e "\n${CYAN}${BOLD}Running Validation Suite${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    DEVICE_UDID=${DEVICE_UDID:-$(xcrun simctl list devices booted --json 2>/dev/null | $PYTHON -c "
+import sys, json
+data = json.load(sys.stdin)
+for rt, devs in data.get('devices', {}).items():
+    for d in devs:
+        if d.get('state') == 'Booted':
+            print(d['udid']); exit()
+" 2>/dev/null)}
+
+    SUITE_COUNT=${VALIDATE_COUNT:-5}
+    echo -e "${BLUE}►${NC} Generating and running $SUITE_COUNT tests..."
+    SUITE_RESULT=$(curl -s -X POST http://localhost:8000/run-test-suite \
+        -H "Content-Type: application/json" \
+        -d "{\"count\":$SUITE_COUNT,\"device_udid\":\"$DEVICE_UDID\"}" 2>/dev/null)
+
+    PASSED=$($PYTHON -c "import sys,json; print(json.load(sys.stdin).get('passed', 0))" <<< "$SUITE_RESULT" 2>/dev/null)
+    TOTAL=$($PYTHON -c "import sys,json; print(json.load(sys.stdin).get('total', 0))" <<< "$SUITE_RESULT" 2>/dev/null)
+    echo -e "${GREEN}✓${NC} Validation complete: ${PASSED}/${TOTAL} tests passed"
+fi
+
 # Print final status
 $PYTHON -c "
 from backend.app.utils.terminal_ui import print_service_status

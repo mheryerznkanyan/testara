@@ -1,6 +1,7 @@
 """FastAPI application entry point with lifespan-managed services."""
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -35,6 +36,15 @@ async def lifespan(app: FastAPI):
     from langchain_anthropic import ChatAnthropic
     from pathlib import Path
 
+    # Configure LangSmith tracing (must happen before LLM instantiation)
+    if settings.langsmith_tracing and settings.langsmith_api_key:
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+        os.environ["LANGCHAIN_PROJECT"] = settings.langsmith_project
+        logger.info("LangSmith tracing enabled (project: %s)", settings.langsmith_project)
+    else:
+        os.environ.pop("LANGCHAIN_TRACING_V2", None)
+
     llm = ChatAnthropic(
         model=settings.anthropic_model,
         temperature=settings.llm_temperature,
@@ -45,6 +55,9 @@ async def lifespan(app: FastAPI):
     app.state.test_generator = TestGenerator(llm=llm)
     app.state.rag_service = RAGService(settings=settings)
     app.state.enrichment_service = EnrichmentService(llm=llm)
+
+    from app.services.suite_generator import SuiteGenerator
+    app.state.suite_generator = SuiteGenerator(llm=llm)
     
     # Initialize Appium test runner (lazy — Appium server may not be running at startup)
     recordings_dir = Path(__file__).parent.parent / "recordings"

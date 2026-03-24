@@ -56,24 +56,18 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
         )
 
     try:
-        multi_snapshot = await appium_service.discover(
+        snapshot = await appium_service.discover(
             bundle_id=body.bundle_id,
             device_udid=body.device_udid,
         )
 
-        interactive = multi_snapshot.interactive_elements()
-        target = multi_snapshot.target_snapshot
+        interactive = snapshot.interactive_elements()
+        total_elements = sum(len(s.elements) for s in snapshot.screens)
 
-        # Total element count across all screens
-        total_elements = sum(len(s.elements) for s in snapshot.screens) if hasattr(snapshot, 'screens') else len(getattr(snapshot, 'elements', []))
-
-        # Store snapshot in app state and persist to disk
+        # Store in app state
         if not hasattr(request.app.state, "snapshots"):
             request.app.state.snapshots = {}
-        snapshot_key = f"{body.bundle_id}:{body.device_udid}"
-        request.app.state.snapshots[snapshot_key] = multi_snapshot
-
-        total_elements = sum(len(sc.snapshot.elements) for sc in multi_snapshot.screens)
+        request.app.state.snapshots[f"{body.bundle_id}:{body.device_udid}"] = snapshot
 
         # Save to disk for reuse across restarts
         from app.core.config import settings
@@ -96,9 +90,9 @@ async def discover_accessibility_tree(request: Request, body: DiscoveryRequest):
                     value=e.value,
                     enabled=e.enabled,
                 )
-                for e in interactive[:100]  # cap at 100 for response size
+                for e in interactive[:100]
             ],
-            has_screenshot=bool(target and target.screenshot_b64),
+            has_screenshot=bool(snapshot.screens and snapshot.screens[0].screenshot_b64),
         )
 
     except Exception as e:

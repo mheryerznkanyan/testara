@@ -252,12 +252,72 @@ class AppiumDiscoveryService:
 
         logger.warning("Could not find login button after entering credentials")
 
-    def _capture_screen(self, driver, label: str, nav_path: str = "") -> ScreenCapture:
-        """Capture current screen's accessibility tree."""
-        xml = driver.page_source
-        screenshot_b64 = driver.get_screenshot_as_base64()
-        elements = parse_wda_xml(xml)
+    def _capture_screen(self, driver, label: str, nav_path: str = "", wait_for_stable: bool = True) -> ScreenCapture:
+        """Capture current screen's accessibility tree.
+
+        If wait_for_stable=True, polls page_source until element count
+        stabilizes (no new elements for 2 consecutive checks, up to 10s).
+        This handles async-loading content like filter options and lists.
+        """
+        if wait_for_stable:
+            prev_count = 0
+            stable_checks = 0
+            deadline = time.time() + 10
+
+            while time.time() < deadline:
+                xml = driver.page_source
+                elements = parse_wda_xml(xml)
+                interactive = [e for e in elements if e.is_interactive and e.has_useful_name]
+                current_count = len(interactive)
+
+                if current_count == prev_count and current_count > 0:
+                    stable_checks += 1
+                    if stable_checks >= 2:
+                        break
+                else:
+                    stable_checks = 0
+                    prev_count = current_count
+
+                time.sleep(1)
+        else:
+            xml = driver.page_source
+            elements = parse_wda_xml(xml)
+            interactive = [e for e in elements if e.is_interactive and e.has_useful_name]
+
+        # Scroll to reveal off-screen elements — skip on large screens (project lists)
         interactive = [e for e in elements if e.is_interactive and e.has_useful_name]
+        should_scroll = len(interactive) < 200
+        if not should_scroll:
+            logger.info("  Screen '%s': skipping scroll (%d elements already)", label, len(interactive))
+        if should_scroll:
+            try:
+                from appium.webdriver.common.appiumby import AppiumBy
+                scrollable = driver.find_elements(AppiumBy.IOS_CLASS_CHAIN,
+                    "**/XCUIElementTypeScrollView")
+                if scrollable:
+                    size = driver.get_window_size()
+                    start_y = int(size['height'] * 0.8)
+                    end_y = int(size['height'] * 0.3)
+                    mid_x = int(size['width'] * 0.5)
+                    driver.swipe(mid_x, start_y, mid_x, end_y, duration=500)
+                    time.sleep(1)
+
+                    xml2 = driver.page_source
+                    extra_elements = parse_wda_xml(xml2)
+                    existing_names = {(e.element_type, e.name) for e in elements if e.name}
+                    for e in extra_elements:
+                        if e.name and (e.element_type, e.name) not in existing_names:
+                            elements.append(e)
+                            existing_names.add((e.element_type, e.name))
+
+                    driver.swipe(mid_x, end_y, mid_x, start_y, duration=500)
+                    time.sleep(0.5)
+            except Exception:
+                pass
+
+        interactive = [e for e in elements if e.is_interactive and e.has_useful_name]
+        screenshot_b64 = driver.get_screenshot_as_base64()
+
         logger.info(
             "  Screen '%s': %d elements, %d interactive",
             label, len(elements), len(interactive),

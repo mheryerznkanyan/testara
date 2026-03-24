@@ -2,6 +2,13 @@
 import logging
 from typing import Any, Dict, Optional
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(**kwargs):
+        def decorator(fn): return fn
+        return decorator
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +37,7 @@ class RAGService:
             )
         return self._vectorstore
 
+    @traceable(name="rag-query")
     def query(self, test_description: str, k: Optional[int] = None) -> Dict[str, Any]:
         """Query the RAG system for relevant context based on the test description.
 

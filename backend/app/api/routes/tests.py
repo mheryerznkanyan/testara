@@ -5,6 +5,13 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Request
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(**kwargs):
+        def decorator(fn): return fn
+        return decorator
+
 from app.core.config import settings
 from app.schemas.test_schemas import (
     AppContext,
@@ -25,22 +32,25 @@ async def _enrich(request: Request, description: str) -> dict:
     return await asyncio.to_thread(svc.enrich, description)
 
 
-@router.post("/generate-test-with-rag", response_model=TestGenerationResponse)
-async def generate_test_with_rag(request: Request, body: RAGTestGenerationRequest):
-    """Generate a test using RAG context.
+@traceable(name="generate-test-pipeline")
+async def _run_pipeline(
+    enrichment_service,
+    rag_service,
+    generator,
+    appium_service,
+    body: RAGTestGenerationRequest,
+) -> TestGenerationResponse:
+    """Full pipeline: enrich → RAG → discover → generate. All child @traceable calls nest under this parent."""
+    from pathlib import Path
+    from app.utils.accessibility_tree_parser import MultiScreenSnapshot
 
-    The description is enriched before the RAG query and test generation steps,
-    so both retrieval quality and generated test quality benefit.
-    """
     test_type = body.test_type.lower().strip()
-    if test_type not in {"unit", "ui"}:
-        raise HTTPException(status_code=400, detail="test_type must be 'unit' or 'ui'")
 
-    # Enrich first — better description → better RAG retrieval
-    enrichment = await _enrich(request, body.test_description)
+    # 1. Enrich
+    enrichment = await asyncio.to_thread(enrichment_service.enrich, body.test_description)
     enriched_description = enrichment["enriched"]
 
-    rag_service = request.app.state.rag_service
+    # 2. RAG query
     rag_context = rag_service.query(enriched_description, k=body.rag_top_k)
 
     code_snippets_text = "\n\n".join(
@@ -48,7 +58,7 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         for s in rag_context["code_snippets"]
     )
 
-    # Extract and inject navigation context (like v1 did)
+    # Navigation context
     navigation_context_str = ""
     navigation_metadata = {}
     if settings.project_root:
@@ -81,11 +91,8 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         include_comments=body.include_comments,
     )
 
-    # Load cached discovery snapshot (run /discover once, reuse forever)
+    # 3. Load cached discovery snapshot
     accessibility_snapshot = None
-    from pathlib import Path
-    from app.utils.accessibility_tree_parser import MultiScreenSnapshot
-
     snapshot_path = Path(settings.rag_persist_dir) / "discovery_snapshot.json"
     if snapshot_path.exists():
         try:
@@ -98,12 +105,11 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         except Exception as e:
             logger.warning("Could not load cached snapshot: %s", e)
 
-    # Fall back to live discovery if no cache and discovery is enabled
+    # Fall back to live discovery if no cache
     if accessibility_snapshot is None and body.discovery_enabled:
         effective_bundle_id = body.bundle_id or settings.bundle_id
         effective_device_udid = body.device_udid or ""
 
-        # Auto-detect booted simulator if no UDID provided
         if effective_bundle_id and not effective_device_udid:
             try:
                 import subprocess, json as _json
@@ -122,41 +128,27 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
             except Exception as e:
                 logger.warning("Could not auto-detect booted simulator: %s", e)
 
-        if effective_bundle_id and effective_device_udid:
-            appium_service = getattr(request.app.state, "appium_service", None)
-            if appium_service:
-                try:
-                    accessibility_snapshot = await appium_service.discover(
-                        bundle_id=effective_bundle_id,
-                        device_udid=effective_device_udid,
-                    )
-                    logger.info(
-                        "Appium discovery complete: %d interactive elements",
-                        len(accessibility_snapshot.interactive_elements()),
-                    )
-                    # Save to disk for future reuse
-                    try:
-                        accessibility_snapshot.save(str(snapshot_path))
-                    except Exception:
-                        pass
-                except Exception as e:
-                    logger.warning("Appium discovery failed (continuing without): %s", e)
-            else:
-                logger.warning(
-                    "discovery_enabled=True but Appium service not initialized (APPIUM_ENABLED=false)"
+        if effective_bundle_id and effective_device_udid and appium_service:
+            try:
+                accessibility_snapshot = await appium_service.discover(
+                    bundle_id=effective_bundle_id,
+                    device_udid=effective_device_udid,
                 )
+                logger.info(
+                    "Appium discovery complete: %d interactive elements",
+                    len(accessibility_snapshot.interactive_elements()),
+                )
+                try:
+                    accessibility_snapshot.save(str(snapshot_path))
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning("Appium discovery failed (continuing without): %s", e)
 
-    generator = request.app.state.test_generator
-    try:
-        response = await asyncio.to_thread(
-            generator.run, gen_request, accessibility_snapshot
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error generating test: {exc}")
+    # 4. Generate test
+    response = await asyncio.to_thread(
+        generator.run, gen_request, accessibility_snapshot
+    )
 
     response.metadata["enrichment"] = {
         "original_description": body.test_description,
@@ -164,7 +156,6 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         "enrichment_used": enrichment["used"],
         **({"enrichment_error": enrichment["error"]} if "error" in enrichment else {}),
     }
-
     response.metadata["rag_enabled"] = True
     response.metadata["rag_context"] = {
         "accessibility_ids_found": len(rag_context.get("accessibility_ids", [])),
@@ -176,6 +167,31 @@ async def generate_test_with_rag(request: Request, body: RAGTestGenerationReques
         response.metadata["rag_error"] = rag_context["error"]
     if navigation_metadata:
         response.metadata["navigation"] = navigation_metadata
+
+    return response
+
+
+@router.post("/generate-test-with-rag", response_model=TestGenerationResponse)
+async def generate_test_with_rag(request: Request, body: RAGTestGenerationRequest):
+    """Generate a test using RAG context."""
+    test_type = body.test_type.lower().strip()
+    if test_type not in {"unit", "ui"}:
+        raise HTTPException(status_code=400, detail="test_type must be 'unit' or 'ui'")
+
+    try:
+        response = await _run_pipeline(
+            enrichment_service=request.app.state.enrichment_service,
+            rag_service=request.app.state.rag_service,
+            generator=request.app.state.test_generator,
+            appium_service=getattr(request.app.state, "appium_service", None),
+            body=body,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating test: {exc}")
 
     return response
 

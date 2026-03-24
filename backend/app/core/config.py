@@ -13,7 +13,7 @@ _ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5-20250929"
-    llm_temperature: float = 0.3
+    llm_temperature: float = 0.0
     llm_max_tokens: int = 4096
     rag_persist_dir: str = str(Path(__file__).resolve().parents[3] / "rag_store")
     rag_collection: str = "ios_app"
@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # Test credentials for auto-login (used by discovery and test runner)
     test_credentials_email: str = ""
     test_credentials_password: str = ""
+
+    # LangSmith tracing
+    langsmith_api_key: str = ""
+    langsmith_project: str = "testara"
+    langsmith_tracing: bool = True
 
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""

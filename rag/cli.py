@@ -33,7 +33,8 @@ from rag.store import (
     safe_json,
 )
 
-DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+import os
+DEFAULT_EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL", "BAAI/bge-base-en-v1.5")
 
 _STORYBOARD_SUFFIXES = {".storyboard", ".xib"}
 _LOCALIZATION_SUFFIXES = {".xcstrings", ".strings"}

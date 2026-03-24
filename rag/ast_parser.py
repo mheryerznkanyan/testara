@@ -54,7 +54,7 @@ _SWIFT_LANGUAGE = None
 
 try:
     import tree_sitter_swift as _ts_swift  # type: ignore[import]
-    from tree_sitter import Language, Parser  # type: ignore[import]
+    from tree_sitter import Language, Parser, QueryCursor  # type: ignore[import]
 
     _SWIFT_LANGUAGE = Language(_ts_swift.language())
     _TS_AVAILABLE = True
@@ -331,7 +331,8 @@ def extract_uikit_properties_ast(
     # Run the property query
     try:
         query = _SWIFT_LANGUAGE.query(_PROPERTY_QUERY_SRC)
-        captures = query.captures(tree.root_node)
+        cursor = QueryCursor(query)
+        captures = cursor.captures(tree.root_node)
     except Exception as exc:
         logger.warning("tree-sitter query error for %s: %s", class_name, exc)
         return []
@@ -485,7 +486,7 @@ def _extract_via_regex(body_code: str) -> List[Dict]:
 def _extract_via_tree_sitter_swiftui(body_code: str) -> Optional[List[Dict]]:
     """Attempt tree-sitter based extraction; returns None if unavailable."""
     try:
-        from tree_sitter import Language as TSLanguage, Parser as TSParser
+        from tree_sitter import Language as TSLanguage, Parser as TSParser, QueryCursor as TSQueryCursor
     except ImportError:
         return None
 
@@ -509,24 +510,22 @@ def _extract_via_tree_sitter_swiftui(body_code: str) -> Optional[List[Dict]]:
         )
 
         query = lang.query(query_str)
-        captures = query.captures(root)
+        cursor = TSQueryCursor(query)
+        captures = cursor.captures(root)
 
-        # captures is a list of (node, capture_name) tuples
+        # captures is dict[str, list[Node]] in tree-sitter >= 0.25
         seen: set = set()
         results: List[Dict] = []
-        fn_pending: list = []
-        
-        for node, cap_name in captures:
-            if cap_name == "fn":
-                fn_pending.append(node)
-            elif cap_name == "label" and fn_pending:
-                fn_node = fn_pending.pop(0)
-                component = fn_node.text.decode() if fn_node.text else ""
-                label = node.text.decode() if node.text else ""
-                key = (component, label)
-                if component in _SUPPORTED_CALLS and key not in seen:
-                    seen.add(key)
-                    results.append(_build_entry(component, label))
+        fn_nodes = captures.get("fn", [])
+        label_nodes = captures.get("label", [])
+
+        for fn_node, label_node in zip(fn_nodes, label_nodes):
+            component = fn_node.text.decode() if fn_node.text else ""
+            label = label_node.text.decode() if label_node.text else ""
+            key = (component, label)
+            if component in _SUPPORTED_CALLS and key not in seen:
+                seen.add(key)
+                results.append(_build_entry(component, label))
 
         return results if results else None
 

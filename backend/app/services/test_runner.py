@@ -11,6 +11,13 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(**kwargs):
+        def decorator(fn): return fn
+        return decorator
+
 logger = logging.getLogger(__name__)
 
 # Harness template written alongside test file; owns the Appium driver lifecycle.
@@ -170,6 +177,7 @@ class AppiumTestRunner:
         self.server_url = server_url
         self.test_timeout = test_timeout
 
+    @traceable(name="execute-test")
     async def run_test(
         self,
         test_code: str,
