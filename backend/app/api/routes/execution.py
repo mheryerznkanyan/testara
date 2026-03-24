@@ -219,8 +219,8 @@ async def run_test_suite(request: Request, body: TestSuiteRequest):
                     break
         gen_results.append(gen_result if gen_result is not None else Exception("All retries exhausted"))
         if i < len(descriptions) - 1:
-            logger.info("Suite: waiting 60s before next generation (rate limit)...")
-            await asyncio.sleep(60)
+            logger.info("Suite: waiting 20s before next generation (rate limit)...")
+            await asyncio.sleep(20)
 
     # 4. Execute each test sequentially (Appium is single-session)
     test_runner = request.app.state.test_runner

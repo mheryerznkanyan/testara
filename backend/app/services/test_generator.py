@@ -40,7 +40,11 @@ def _strip_python_fences(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```python\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^```\s*\n?", "", text)
-    text = re.sub(r"\n?```\s*$", "", text)
+    # Remove trailing fences (may have whitespace or newlines after)
+    text = re.sub(r"\n?```[\s]*$", "", text)
+    # Also remove any standalone ``` lines anywhere at the end
+    while text.rstrip().endswith("```"):
+        text = text.rstrip()[:-3].rstrip()
     return text.strip()
 
 

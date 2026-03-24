@@ -377,41 +377,34 @@ Each test description should be a single sentence in plain English that a test a
 Generate a MIX of these test types (distribute evenly across all categories):
 
 1. **Smoke tests** (quick sanity checks):
-   - "Verify the app launches and the home screen is displayed"
-   - "Verify tapping [tab] navigates to [screen]"
+   - "Verify the app launches and the Home screen displays [known text element]"
+   - "Verify tapping [tab] navigates to [screen] and [known element] is visible"
 
 2. **Element presence & visibility**:
-   - "Navigate to [screen] and verify [element] is visible"
-   - "Verify [screen] displays exactly N [elements]"
+   - "Navigate to [screen] and verify [button/field] is visible"
+   - "Verify [screen] displays exactly N unique [type of element]" (count UNIQUE elements with DIFFERENT names only)
 
 3. **Navigation & screen transitions**:
-   - "Tap [tab], then tap [button], verify [next screen] loads"
-   - "Navigate to [screen], tap [back/close], verify return to [previous screen]"
+   - "Tap [tab], then tap [button], verify [specific element on next screen] appears"
+   - "Navigate to [screen], tap BackButton, verify return to previous screen"
 
-4. **User interaction flows** (multi-step):
-   - "Open [screen], tap [filter], select [option], tap [apply], verify results update"
-   - "Navigate to [screen], enter text in [field], verify [results/suggestions] appear"
+4. **User interaction flows** (2-3 steps):
+   - "Open [screen], tap [filter button], verify [expected elements] appear"
+   - "Navigate to [screen], tap [button], verify [element] is visible"
 
-5. **State & toggle verification**:
-   - "Tap [toggle/switch] and verify its state changes"
-   - "Select [option A], then select [option B], verify [option A] is deselected"
+5. **Negative tests**:
+   - "Verify [screen A] does NOT show [element that only exists on screen B]"
 
-6. **Negative/boundary tests** (intentionally tricky):
-   - "Verify [screen] does NOT show [element that doesn't exist on that screen]"
-   - "Navigate to [screen] and verify there are exactly N items (use the REAL count from the tree)"
-
-7. **Cross-screen consistency**:
-   - "Apply [filter] on [screen], navigate away, come back, verify [filter] is still applied"
-   - "Verify [element] appears on both [screen A] and [screen B]"
-
-IMPORTANT RULES:
-- ONLY reference elements that exist in the accessibility tree below — never invent element names
-- Use exact element names from the tree (e.g. "Search", "Category", "Project status")
-- Each test must be independently executable — no dependencies between tests
-- Vary complexity: ~30% simple (1-2 steps), ~40% medium (3-4 steps), ~30% complex (5+ steps)
-- Use DIFFERENT screens and elements across tests — don't repeat the same screen/element combination
-- Include exact counts from the tree when testing element counts (e.g. if tree shows 7 filter buttons, test for 7)
-- Describe the full navigation path for each test (e.g. "Navigate to Search tab, tap Project status...")
+RULES THAT PREVENT TEST FAILURES:
+- ONLY reference elements from the accessibility tree below — never invent names
+- Use exact element names (e.g. "Search", "Category", "Project status")
+- Each test must be independently executable
+- NEVER test for (×N) counts — those are repeated list items, iOS only renders visible ones. Instead count UNIQUE elements with DIFFERENT names (e.g. "7 filter buttons: Category, Project status, Location, % raised, Amount raised, Projects We Love, Goal")
+- NEVER test for value='1' or other state values — the app resets before each test, snapshot state is NOT preserved
+- NEVER use the "Log in" tab — it shows the same screen as Search tab
+- NEVER verify exact counts of Cell or list items — they are virtualized
+- Keep tests simple: prefer 2-3 step tests over complex 5+ step flows
+- Describe navigation using tab names: "Navigate to Search tab, tap Project status..."
 
 Output a JSON array of strings. No markdown, no explanation, just the JSON array.
 
