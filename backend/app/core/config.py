@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     # Auth: set a non-empty value to require X-API-Key header on all routes
     api_key: str = ""
 
+    # BrowserStack App Automate (cloud execution)
+    browserstack_username: str = ""
+    browserstack_access_key: str = ""
+    # bs:// app URL from a prior upload, or leave empty to upload on first run
+    browserstack_app_url: str = ""
+    # Default device for cloud runs
+    browserstack_device: str = "iPhone 14"
+    browserstack_os_version: str = "16"
+    # Path to .ipa for auto-upload (optional)
+    browserstack_ipa_path: str = ""
+
     # Batch endpoint: max requests per call to prevent runaway LLM usage
     batch_max_size: int = 20
 

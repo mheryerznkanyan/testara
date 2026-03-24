@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.services.enrichment_service import EnrichmentService
 from app.services.test_generator import TestGenerator
 from app.services.rag_service import RAGService
-from app.api.routes import health, tests, execution, simulators, discovery
+from app.api.routes import health, tests, execution, simulators, discovery, cloud
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,6 +137,7 @@ app.include_router(tests.router)
 app.include_router(execution.router)
 app.include_router(simulators.router)
 app.include_router(discovery.router)
+app.include_router(cloud.router)
 
 # Mount static files for video recordings
 from pathlib import Path
