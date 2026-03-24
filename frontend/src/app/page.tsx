@@ -22,6 +22,7 @@ interface TestResult {
       original_description: string
       enriched_description: string
     }
+    langsmith_run_id?: string
   }
 }
 
@@ -197,6 +198,7 @@ export default function TestGenerator() {
           test_code: result.test_code,
           bundle_id: settings.bundleId || undefined,
           device_udid: settings.deviceUdid || '',
+          langsmith_run_id: result.metadata?.langsmith_run_id || undefined,
         }),
       })
       if (!res.ok) {

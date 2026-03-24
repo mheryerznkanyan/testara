@@ -4,6 +4,17 @@ import logging
 import re
 from typing import Any, Dict
 
+try:
+    from langsmith import traceable
+    from langsmith.run_helpers import get_current_run_tree
+    _LANGSMITH_AVAILABLE = True
+except ImportError:
+    def traceable(**kwargs):
+        def decorator(fn): return fn
+        return decorator
+    def get_current_run_tree(): return None
+    _LANGSMITH_AVAILABLE = False
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from tenacity import (
     before_sleep_log,
@@ -29,7 +40,11 @@ def _strip_python_fences(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```python\s*\n?", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^```\s*\n?", "", text)
-    text = re.sub(r"\n?```\s*$", "", text)
+    # Remove trailing fences (may have whitespace or newlines after)
+    text = re.sub(r"\n?```[\s]*$", "", text)
+    # Also remove any standalone ``` lines anywhere at the end
+    while text.rstrip().endswith("```"):
+        text = text.rstrip()[:-3].rstrip()
     return text.strip()
 
 
@@ -137,6 +152,7 @@ class TestGenerator:
             return ""
         return f"{RUNTIME_TREE_INSTRUCTIONS}\n\n{tree_str}\n"
 
+    @traceable(name="generate-test")
     def run(self, request: TestGenerationRequest, accessibility_snapshot=None) -> TestGenerationResponse:
         """Generate an Appium Python test function from the request."""
         context_section = build_context_section(request.app_context)
@@ -185,6 +201,15 @@ class TestGenerator:
             "OK" if validation_results["all_passed"] else validation_results["failed_checks"],
         )
 
+        # Capture LangSmith run ID for feedback linking
+        langsmith_run_id = None
+        try:
+            run_tree = get_current_run_tree()
+            if run_tree:
+                langsmith_run_id = str(run_tree.id)
+        except Exception:
+            pass
+
         return TestGenerationResponse(
             test_code=test_code,
             test_type="ui",
@@ -195,5 +220,6 @@ class TestGenerator:
                 "has_context": bool(request.app_context),
                 "context_provided": bool(context_section),
                 "contract_validation": validation_results,
+                "langsmith_run_id": langsmith_run_id,
             },
         )

@@ -2,6 +2,13 @@
 import logging
 from pathlib import Path
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(**kwargs):
+        def decorator(fn): return fn
+        return decorator
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from tenacity import (
     before_sleep_log,
@@ -75,6 +82,7 @@ class EnrichmentService:
     def _invoke_llm(self, messages):
         return self._llm.invoke(messages)
 
+    @traceable(name="enrich-description")
     def enrich(self, description: str) -> dict:
         """Enrich a test description and return both versions.
 
