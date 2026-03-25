@@ -10,48 +10,90 @@
   :root {
     /* Light mode */
     --background:       0 0% 100%;
-    --foreground:       0 0% 9%;
-    --muted:            0 0% 60%;
-    --muted-foreground: 0 0% 45%;
-    --border:           0 0% 90%;
-    --accent:           0 0% 96%;
+    --foreground:       222 47% 11%;
+    --muted:            220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --border:           220 13% 91%;
+    --accent:           220 14% 96%;
     --sidebar:          0 0% 98%;
     --glass-bg:         0 0% 96%;
 
     /* Surface scale */
     --surface-0: 0 0% 100%;
-    --surface-1: 0 0% 97%;
-    --surface-2: 0 0% 94%;
-    --surface-3: 0 0% 91%;
+    --surface-1: 220 14% 97%;
+    --surface-2: 220 13% 94%;
+    --surface-3: 220 13% 91%;
 
     /* Brand */
-    --brand:       217 91% 60%;   /* blue-500 */
+    --brand:       217 91% 60%;
     --brand-muted: 217 91% 35%;
 
+    /* shadcn tokens */
+    --card:             0 0% 100%;
+    --card-foreground:  222 47% 11%;
+    --popover:          0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary:          222 47% 11%;
+    --primary-foreground: 210 40% 98%;
+    --secondary:        220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --destructive:      0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --ring:             222 47% 11%;
+    --input:            220 13% 91%;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+
     /* Radius */
-    --radius: 0.5rem;
+    --radius: 0.625rem;
   }
 
   .dark {
-    /* Dark mode – near-black, not pure black */
-    --background:       0 0% 4%;
-    --foreground:       0 0% 95%;
-    --muted:            0 0% 35%;
-    --muted-foreground: 0 0% 58%;
-    --border:           0 0% 13%;
-    --accent:           0 0% 10%;
-    --sidebar:          0 0% 3%;
-    --glass-bg:         0 0% 6%;
+    /* Dark mode – deep blue-black (shadcn-admin inspired) */
+    --background:       224 71% 4%;
+    --foreground:       210 40% 98%;
+    --muted:            217 33% 17%;
+    --muted-foreground: 215 20% 55%;
+    --border:           215 28% 12%;
+    --accent:           217 33% 12%;
+    --sidebar:          224 71% 3%;
+    --glass-bg:         224 71% 6%;
 
     /* Surface scale */
-    --surface-0: 0 0% 4%;
-    --surface-1: 0 0% 7%;
-    --surface-2: 0 0% 10%;
-    --surface-3: 0 0% 13%;
+    --surface-0: 224 71% 4%;
+    --surface-1: 224 50% 6%;
+    --surface-2: 217 33% 10%;
+    --surface-3: 215 28% 14%;
 
     /* Brand */
     --brand:       217 91% 60%;
     --brand-muted: 217 91% 25%;
+
+    /* shadcn tokens */
+    --card:             224 50% 6%;
+    --card-foreground:  210 40% 98%;
+    --popover:          224 50% 6%;
+    --popover-foreground: 210 40% 98%;
+    --primary:          217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary:        217 33% 12%;
+    --secondary-foreground: 210 40% 98%;
+    --destructive:      0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+    --ring:             224 64% 33%;
+    --input:            215 28% 15%;
+
+    /* Sidebar */
+    --sidebar-background: 224 71% 3%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-border: 215 28% 10%;
+    --sidebar-accent: 217 33% 10%;
+    --sidebar-accent-foreground: 210 40% 98%;
   }
 
   /* ── Resets ─────────────────────────────────────────────── */
@@ -195,57 +237,12 @@
     animation: gradientShift 12s ease infinite;
   }
 
-  /* ── Surface cards ──────────────────────────────────────── */
-  .card {
-    @apply rounded-xl border border-border bg-surface-1;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
-  }
-
-  .card:hover {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2), 0 2px 4px rgba(0,0,0,0.16);
-    transform: translateY(-1px);
-  }
-
+  /* ── Card glow (decorative, used sparingly) ─────────────── */
   .card-glow {
-    @apply card;
     box-shadow:
       0 0 0 1px rgba(59,130,246,0.15),
       0 4px 24px rgba(59,130,246,0.10),
       0 1px 3px rgba(0,0,0,0.2);
-  }
-
-  /* ── Buttons ────────────────────────────────────────────── */
-  .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm;
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-    color: white;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
-    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .btn-primary:hover {
-    background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-    box-shadow: 0 4px 12px rgba(59,130,246,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
-    transform: translateY(-1px);
-  }
-
-  .btn-primary:active {
-    transform: translateY(0);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-  }
-
-  .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm;
-    @apply text-muted-foreground hover:text-foreground;
-    background: transparent;
-    border: 1px solid transparent;
-    transition: all 0.15s ease;
-  }
-
-  .btn-ghost:hover {
-    background: hsl(var(--surface-2));
-    border-color: hsl(var(--border));
   }
 
   /* ── Glow effects ───────────────────────────────────────── */
@@ -308,40 +305,7 @@
     border-top: 1px solid hsl(var(--border));
   }
 
-  /* ── Skeleton loader ────────────────────────────────────── */
-  .skeleton {
-    @apply rounded-md;
-    background: linear-gradient(
-      90deg,
-      hsl(var(--surface-1)) 25%,
-      hsl(var(--surface-2)) 50%,
-      hsl(var(--surface-1)) 75%
-    );
-    background-size: 200% 100%;
-    animation: shimmerSkeleton 1.5s ease-in-out infinite;
-  }
-
-  /* ── Badge ──────────────────────────────────────────────── */
-  .badge {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
-    background: hsl(var(--surface-2));
-    border: 1px solid hsl(var(--border));
-    color: hsl(var(--muted-foreground));
-  }
-
-  .badge-blue {
-    @apply badge;
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.25);
-    color: #93c5fd;
-  }
-
-  .badge-purple {
-    @apply badge;
-    background: rgba(168, 85, 247, 0.1);
-    border-color: rgba(168, 85, 247, 0.25);
-    color: #d8b4fe;
-  }
+  /* Old .skeleton, .badge, .btn-* classes removed — now using shadcn/ui components */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -373,6 +337,10 @@
     transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
     transition-duration: 300ms;
   }
+
+  /* Hide scrollbar utility */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
 
   /* Hardware-accelerated layers */
   .gpu { transform: translateZ(0); will-change: transform; }

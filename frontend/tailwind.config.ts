@@ -16,9 +16,37 @@ const config: Config = {
         'muted-foreground': 'hsl(var(--muted-foreground))',
         border: 'hsl(var(--border))',
         accent: 'hsl(var(--accent))',
-        sidebar: 'hsl(var(--sidebar))',
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar-background))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          border: 'hsl(var(--sidebar-border))',
+          accent: 'hsl(var(--sidebar-accent))',
+          'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+        },
         'glass-bg': 'hsl(var(--glass-bg))',
         'apple-blue': '#0071E3',
+        card: {
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
+        ring: 'hsl(var(--ring))',
+        input: 'hsl(var(--input))',
 
         // Modern blues – Vercel / Linear inspired
         blue: {

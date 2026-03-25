@@ -1,14 +1,29 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-
-interface SimulatorDevice {
-  name: string
-  udid: string
-  ios_version: string
-  state: string
-}
+import { toast } from 'sonner'
+import {
+  Smartphone,
+  RefreshCw,
+  Save,
+  Cloud,
+  Key,
+  Globe,
+  Info,
+  Eye,
+  EyeOff,
+  CheckCircle,
+  Loader2,
+} from 'lucide-react'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { PageHeader } from '@/components/page-header'
+import { getSimulators } from '@/lib/api'
+import type { SimulatorDevice } from '@/types'
 
 interface Settings {
   deviceName: string
@@ -26,10 +41,19 @@ interface CloudSettings {
   osVersion: string
 }
 
-type Tab = 'simulator' | 'cloud'
+const cloudDeviceOptions = [
+  'iPhone 15 Pro',
+  'iPhone 15',
+  'iPhone 14 Pro',
+  'iPhone 14',
+  'iPhone 13 Pro',
+  'iPhone 13',
+  'iPhone 12',
+  'iPhone SE (3rd gen)',
+]
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('simulator')
+  const [activeTab, setActiveTab] = useState('simulator')
   const [settings, setSettings] = useState<Settings>({
     deviceName: 'iPhone 15 Pro',
     deviceUdid: '',
@@ -44,14 +68,11 @@ export default function SettingsPage() {
     defaultDevice: 'iPhone 15 Pro',
     osVersion: '17',
   })
-
   const [availableDevices, setAvailableDevices] = useState<SimulatorDevice[]>([])
   const [loading, setLoading] = useState(true)
-  const [saved, setSaved] = useState(false)
-  const [cloudSaved, setCloudSaved] = useState(false)
+  const [showAccessKey, setShowAccessKey] = useState(false)
 
   useEffect(() => {
-    // Load simulator settings
     const stored = localStorage.getItem('testara_settings')
     if (stored) {
       const parsed = JSON.parse(stored)
@@ -63,39 +84,30 @@ export default function SettingsPage() {
         bundleId: parsed.bundleId || '',
       })
     }
-
-    // Load cloud settings
     const storedCloud = localStorage.getItem('testara_cloud_settings')
-    if (storedCloud) {
-      setCloudSettings(JSON.parse(storedCloud))
-    }
-
+    if (storedCloud) setCloudSettings(JSON.parse(storedCloud))
     fetchSimulators()
   }, [])
 
   const fetchSimulators = async () => {
+    setLoading(true)
     try {
-      const response = await fetch('http://localhost:8000/simulators')
-      if (response.ok) {
-        const data = await response.json()
-        setAvailableDevices(data.devices)
-
-        const stored = localStorage.getItem('testara_settings')
-        const parsed = stored ? JSON.parse(stored) : null
-        const hasDeviceUdid = parsed?.deviceUdid
-        if (!hasDeviceUdid && data.devices.length > 0) {
-          const bootedDevice = data.devices.find((d: SimulatorDevice) => d.state === 'Booted')
-          const defaultDevice = bootedDevice || data.devices[0]
-          setSettings((prev) => ({
-            ...prev,
-            deviceName: defaultDevice.name,
-            deviceUdid: defaultDevice.udid,
-            iosVersion: defaultDevice.ios_version,
-          }))
-        }
+      const data = await getSimulators()
+      setAvailableDevices(data.devices)
+      const stored = localStorage.getItem('testara_settings')
+      const parsed = stored ? JSON.parse(stored) : null
+      if (!parsed?.deviceUdid && data.devices.length > 0) {
+        const booted = data.devices.find((d: SimulatorDevice) => d.state === 'Booted')
+        const def = booted || data.devices[0]
+        setSettings((prev) => ({
+          ...prev,
+          deviceName: def.name,
+          deviceUdid: def.udid,
+          iosVersion: def.ios_version,
+        }))
       }
-    } catch (error) {
-      console.error('Failed to fetch simulators:', error)
+    } catch {
+      // silent
     } finally {
       setLoading(false)
     }
@@ -103,14 +115,12 @@ export default function SettingsPage() {
 
   const handleSave = () => {
     localStorage.setItem('testara_settings', JSON.stringify(settings))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    toast.success('Simulator settings saved')
   }
 
   const handleCloudSave = () => {
     localStorage.setItem('testara_cloud_settings', JSON.stringify(cloudSettings))
-    setCloudSaved(true)
-    setTimeout(() => setCloudSaved(false), 2000)
+    toast.success('Cloud settings saved')
   }
 
   const handleDeviceChange = (udid: string) => {
@@ -125,325 +135,265 @@ export default function SettingsPage() {
     }
   }
 
-  const deviceOptions = [
-    'iPhone 15 Pro',
-    'iPhone 15',
-    'iPhone 14 Pro',
-    'iPhone 14',
-    'iPhone 13 Pro',
-    'iPhone 13',
-    'iPhone 12',
-    'iPhone SE (3rd gen)',
-  ]
-
   return (
     <div className="h-full bg-background overflow-auto">
       <div className="max-w-3xl mx-auto px-8 py-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-        >
-          <h1 className="text-4xl font-bold mb-2">Settings</h1>
-          <p className="text-muted mb-8">
-            Configure simulator and test execution preferences
-          </p>
-        </motion.div>
+        <PageHeader
+          title="Settings"
+          description="Configure simulator and cloud execution preferences"
+        />
 
-        {/* Tabs */}
-        <div className="flex gap-1 mb-8 p-1 rounded-lg bg-surface-2 w-fit">
-          <button
-            onClick={() => setActiveTab('simulator')}
-            className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'simulator'
-                ? 'bg-surface-1 text-foreground shadow-sm'
-                : 'text-muted hover:text-foreground'
-            }`}
-          >
-            Simulator
-          </button>
-          <button
-            onClick={() => setActiveTab('cloud')}
-            className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'cloud'
-                ? 'bg-surface-1 text-foreground shadow-sm'
-                : 'text-muted hover:text-foreground'
-            }`}
-          >
-            Cloud
-          </button>
-        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="mb-8">
+            <TabsTrigger value="simulator">
+              <Smartphone className="h-3.5 w-3.5 mr-1.5" />
+              Simulator
+            </TabsTrigger>
+            <TabsTrigger value="cloud">
+              <Cloud className="h-3.5 w-3.5 mr-1.5" />
+              Cloud
+            </TabsTrigger>
+          </TabsList>
 
-        {/* ── SIMULATOR TAB ── */}
-        {activeTab === 'simulator' && (
-          <div className="space-y-6">
-            {/* Simulator Device */}
-            <motion.div
-              className="glass p-6 rounded-xl"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.6 }}
-            >
-              <label className="block text-sm font-semibold mb-3">
-                Simulator Device
-              </label>
-              {loading ? (
-                <div className="text-center py-3 text-muted">Loading simulators...</div>
-              ) : availableDevices.length === 0 ? (
-                <div className="text-center py-3 text-red-400">
-                  No simulators found. Make sure Xcode is installed.
-                </div>
-              ) : (
-                <>
-                  <select
-                    value={settings.deviceUdid}
-                    onChange={(e) => handleDeviceChange(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {availableDevices.map((device) => (
-                      <option key={device.udid} value={device.udid}>
-                        {device.name} (iOS {device.ios_version}) [{device.udid.slice(0, 8)}]{' '}
-                        {device.state === 'Booted' ? '🟢' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-2">
-                    🟢 = Currently booted • Showing {availableDevices.length} available simulator
-                    {availableDevices.length !== 1 ? 's' : ''}
+          {/* ── SIMULATOR TAB ── */}
+          <TabsContent value="simulator" className="space-y-5">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Simulator Device</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading simulators...
+                  </div>
+                ) : availableDevices.length === 0 ? (
+                  <p className="text-sm text-red-400">
+                    No simulators found. Make sure Xcode is installed.
                   </p>
-                </>
-              )}
-            </motion.div>
+                ) : (
+                  <>
+                    <Select
+                      value={settings.deviceUdid}
+                      onChange={(e) => handleDeviceChange(e.target.value)}
+                    >
+                      {availableDevices.map((device) => (
+                        <option key={device.udid} value={device.udid}>
+                          {device.name} (iOS {device.ios_version}){' '}
+                          {device.state === 'Booted' ? '● Booted' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {availableDevices.length} simulator{availableDevices.length !== 1 ? 's' : ''} available
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
-            {/* Current Selection Display */}
             {settings.deviceUdid && (
-              <motion.div
-                className="glass p-6 rounded-xl"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2, duration: 0.6 }}
-              >
-                <label className="block text-sm font-semibold mb-3">
-                  Selected Configuration
-                </label>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted">Device:</span>
-                    <span className="text-foreground">{settings.deviceName}</span>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Selected Configuration</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Device</p>
+                      <p className="text-sm font-medium">{settings.deviceName}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">iOS Version</p>
+                      <p className="text-sm font-medium">{settings.iosVersion}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">UDID</p>
+                      <p className="text-sm font-mono text-xs text-muted-foreground">
+                        {settings.deviceUdid.slice(0, 12)}...
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">iOS:</span>
-                    <span className="text-foreground">{settings.iosVersion}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">UDID:</span>
-                    <span className="text-foreground font-mono text-xs">
-                      {settings.deviceUdid.slice(0, 8)}...
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
+                </CardContent>
+              </Card>
             )}
 
-            {/* App Name */}
-            <motion.div
-              className="glass p-6 rounded-xl"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3, duration: 0.6 }}
-            >
-              <label className="block text-sm font-semibold mb-3">App Name</label>
-              <input
-                type="text"
-                value={settings.appName}
-                onChange={(e) => setSettings({ ...settings, appName: e.target.value })}
-                placeholder="YourApp"
-                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                Name of the app being tested (used in test context)
-              </p>
-            </motion.div>
-
-            {/* Bundle ID */}
-            <motion.div
-              className="glass p-6 rounded-xl"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.35, duration: 0.6 }}
-            >
-              <label className="block text-sm font-semibold mb-3">Bundle ID</label>
-              <input
-                type="text"
-                value={settings.bundleId}
-                onChange={(e) => setSettings({ ...settings, bundleId: e.target.value })}
-                placeholder="com.example.MyApp"
-                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <p className="text-xs text-gray-500 mt-2">
-                Required for Appium live discovery (e.g. com.example.MyApp)
-              </p>
-            </motion.div>
-
-            {/* Refresh Button */}
-            <motion.button
-              onClick={fetchSimulators}
-              disabled={loading}
-              className="w-full glass hover:bg-accent px-6 py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4, duration: 0.6 }}
-            >
-              {loading ? 'Refreshing...' : '🔄 Refresh Simulators'}
-            </motion.button>
-
-            {/* Save Button */}
-            <motion.button
-              onClick={handleSave}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold transition-all duration-300 hover:scale-105"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5, duration: 0.6 }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              {saved ? '✓ Saved!' : 'Save Settings'}
-            </motion.button>
-          </div>
-        )}
-
-        {/* ── CLOUD TAB ── */}
-        {activeTab === 'cloud' && (
-          <div className="space-y-6">
-            {/* Cloud Credentials */}
-            <motion.div
-              className="rounded-xl border border-border bg-surface-1 p-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.5 }}
-            >
-              <h3 className="text-sm font-semibold mb-4">Cloud Credentials</h3>
-              <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">App Configuration</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-muted mb-1.5">
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    App Name
+                  </label>
+                  <Input
+                    value={settings.appName}
+                    onChange={(e) => setSettings({ ...settings, appName: e.target.value })}
+                    placeholder="YourApp"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Name of the app being tested
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Bundle ID
+                  </label>
+                  <Input
+                    value={settings.bundleId}
+                    onChange={(e) => setSettings({ ...settings, bundleId: e.target.value })}
+                    placeholder="com.example.MyApp"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Required for Appium test execution
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={fetchSimulators}
+                disabled={loading}
+                className="flex-1"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh Simulators
+              </Button>
+              <Button onClick={handleSave} className="flex-1">
+                <Save className="h-4 w-4" />
+                Save Settings
+              </Button>
+            </div>
+          </TabsContent>
+
+          {/* ── CLOUD TAB ── */}
+          <TabsContent value="cloud" className="space-y-5">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Key className="h-4 w-4 text-muted-foreground" />
+                  Cloud Credentials
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                     Username
                   </label>
-                  <input
-                    type="text"
+                  <Input
                     value={cloudSettings.username}
                     onChange={(e) =>
                       setCloudSettings({ ...cloudSettings, username: e.target.value })
                     }
-                    placeholder="Enter your username"
-                    className="w-full bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors"
+                    placeholder="Enter your BrowserStack username"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-muted mb-1.5">
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                     Access Key
                   </label>
-                  <input
-                    type="password"
-                    value={cloudSettings.accessKey}
-                    onChange={(e) =>
-                      setCloudSettings({ ...cloudSettings, accessKey: e.target.value })
-                    }
-                    placeholder="Enter your access key"
-                    className="w-full bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors"
-                  />
+                  <div className="relative">
+                    <Input
+                      type={showAccessKey ? 'text' : 'password'}
+                      value={cloudSettings.accessKey}
+                      onChange={(e) =>
+                        setCloudSettings({ ...cloudSettings, accessKey: e.target.value })
+                      }
+                      placeholder="Enter your access key"
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAccessKey(!showAccessKey)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showAccessKey ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </motion.div>
+              </CardContent>
+            </Card>
 
-            {/* App Configuration */}
-            <motion.div
-              className="rounded-xl border border-border bg-surface-1 p-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15, duration: 0.5 }}
-            >
-              <h3 className="text-sm font-semibold mb-4">App Configuration</h3>
-              <div>
-                <label className="block text-xs font-medium text-muted mb-1.5">App URL</label>
-                <input
-                  type="text"
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-muted-foreground" />
+                  App Configuration
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  App URL
+                </label>
+                <Input
                   value={cloudSettings.appUrl}
                   onChange={(e) =>
                     setCloudSettings({ ...cloudSettings, appUrl: e.target.value })
                   }
-                  placeholder="Enter your app URL"
-                  className="w-full bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors"
+                  placeholder="bs://abc123 or leave empty to auto-upload"
                 />
-                <p className="text-xs text-muted mt-2">
-                  URL to your uploaded .ipa file (e.g. bs://abc123)
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  URL from a previous BrowserStack upload
                 </p>
-              </div>
-            </motion.div>
+              </CardContent>
+            </Card>
 
-            {/* Device Configuration */}
-            <motion.div
-              className="rounded-xl border border-border bg-surface-1 p-6"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
-            >
-              <h3 className="text-sm font-semibold mb-4">Default Device</h3>
-              <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  Default Device
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-muted mb-1.5">Device</label>
-                  <select
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Device
+                  </label>
+                  <Select
                     value={cloudSettings.defaultDevice}
                     onChange={(e) =>
                       setCloudSettings({ ...cloudSettings, defaultDevice: e.target.value })
                     }
-                    className="w-full bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors"
                   >
-                    {deviceOptions.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
+                    {cloudDeviceOptions.map((d) => (
+                      <option key={d} value={d}>{d}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-muted mb-1.5">
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                     OS Version
                   </label>
-                  <input
-                    type="text"
+                  <Input
                     value={cloudSettings.osVersion}
                     onChange={(e) =>
                       setCloudSettings({ ...cloudSettings, osVersion: e.target.value })
                     }
                     placeholder="e.g. 17"
-                    className="w-full bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500/40 transition-colors"
                   />
                 </div>
-              </div>
-            </motion.div>
+              </CardContent>
+            </Card>
 
-            {/* Note */}
-            <div className="flex items-start gap-2 text-xs text-muted bg-surface-2 rounded-lg px-4 py-3 border border-border">
-              <svg className="w-4 h-4 mt-0.5 shrink-0 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>Credentials are stored securely in your environment configuration</span>
+            <div className="flex items-start gap-2 text-xs text-muted-foreground bg-surface-2 rounded-lg px-4 py-3 border border-border">
+              <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-400" />
+              <span>Credentials are stored locally in your browser. For production use, configure them in your .env file.</span>
             </div>
 
-            {/* Save Cloud Settings */}
-            <motion.button
-              onClick={handleCloudSave}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold transition-all duration-300"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25, duration: 0.5 }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              {cloudSaved ? '✓ Saved!' : 'Save Cloud Settings'}
-            </motion.button>
-          </div>
-        )}
+            <Button onClick={handleCloudSave} className="w-full">
+              <Save className="h-4 w-4" />
+              Save Cloud Settings
+            </Button>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )

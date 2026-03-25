@@ -2,157 +2,185 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  LayoutDashboard,
+  Zap,
+  Clock,
+  FolderOpen,
+  Cloud,
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
+  TestTube,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+interface NavItem {
+  href: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  badge?: string
+}
+
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
+
+const navGroups: NavGroup[] = [
+  {
+    title: 'General',
+    items: [
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/', label: 'Generate', icon: Zap },
+    ],
+  },
+  {
+    title: 'Testing',
+    items: [
+      { href: '/runs', label: 'Test Runs', icon: Clock },
+      { href: '/suites', label: 'Suites', icon: FolderOpen },
+      { href: '/cloud', label: 'Cloud', icon: Cloud },
+    ],
+  },
+  {
+    title: 'System',
+    items: [
+      { href: '/settings', label: 'Settings', icon: Settings },
+    ],
+  },
+]
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [collapsed, setCollapsed] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('testara_theme') as 'dark' | 'light' | null
-    if (stored) {
-      setTheme(stored)
-      applyTheme(stored)
-    } else {
-      applyTheme('dark')
-    }
+    setMounted(true)
+    const stored = localStorage.getItem('testara_sidebar_collapsed')
+    if (stored === 'true') setCollapsed(true)
   }, [])
 
-  const applyTheme = (newTheme: 'dark' | 'light') => {
-    if (newTheme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
+  const toggleCollapse = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('testara_sidebar_collapsed', String(next))
+      return next
+    })
+  }, [])
+
+  // Cmd+B / Ctrl+B shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault()
+        toggleCollapse()
+      }
     }
-  }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [toggleCollapse])
 
-  const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark'
-    setTheme(newTheme)
-    localStorage.setItem('testara_theme', newTheme)
-    applyTheme(newTheme)
-  }
-
-  const links = [
-    {
-      href: '/dashboard',
-      label: 'Dashboard',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-        </svg>
-      ),
-    },
-    {
-      href: '/',
-      label: 'Generate',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/runs',
-      label: 'Test Runs',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/suites',
-      label: 'Suites',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/cloud',
-      label: 'Cloud',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-        </svg>
-      ),
-    },
-    {
-      href: '/settings',
-      label: 'Settings',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-    },
-  ]
+  if (!mounted) return <aside className="w-60 border-r border-sidebar-border bg-sidebar" />
 
   return (
-    <aside className="w-64 border-r border-border bg-sidebar flex flex-col">
-      {/* Logo */}
-      <div className="p-6 border-b border-border">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">⚡</span>
-          <span className="text-xl font-bold">Testara</span>
-        </div>
+    <aside
+      className={cn(
+        'group/sidebar flex flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-in-out',
+        collapsed ? 'w-[52px]' : 'w-60'
+      )}
+    >
+      {/* ── Logo / Brand ── */}
+      <div className={cn('flex h-14 items-center border-b border-sidebar-border', collapsed ? 'justify-center px-2' : 'px-4')}>
+        <Link href="/" className="flex items-center gap-2.5 overflow-hidden">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
+            <TestTube className="h-4 w-4" />
+          </div>
+          {!collapsed && (
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold leading-none">Testara</span>
+              <span className="text-[10px] text-sidebar-foreground/50 leading-none mt-0.5">iOS Test Platform</span>
+            </div>
+          )}
+        </Link>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
-        {links.map((link) => {
-          const isActive = pathname === link.href
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted hover:text-foreground hover:bg-accent/50'
-              }`}
-            >
-              {link.icon}
-              {link.label}
-            </Link>
-          )
-        })}
+      {/* ── Navigation Groups ── */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 no-scrollbar">
+        {navGroups.map((group, gi) => (
+          <div key={group.title} className={cn(gi > 0 && 'mt-4')}>
+            {/* Group title */}
+            {!collapsed && (
+              <div className="px-4 mb-1">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+                  {group.title}
+                </span>
+              </div>
+            )}
+            {collapsed && gi > 0 && (
+              <div className="mx-2 my-2 h-px bg-sidebar-border" />
+            )}
+
+            {/* Items */}
+            <div className="space-y-0.5 px-2">
+              {group.items.map((item) => {
+                const isActive =
+                  item.href === '/'
+                    ? pathname === '/'
+                    : pathname.startsWith(item.href)
+                const Icon = item.icon
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    title={collapsed ? item.label : undefined}
+                    className={cn(
+                      'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors',
+                      isActive
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                        : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                      collapsed && 'justify-center px-0 py-2'
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    {!collapsed && <span className="truncate">{item.label}</span>}
+                    {!collapsed && item.badge && (
+                      <span className="ml-auto rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-400">
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
-      {/* Theme Toggle & Footer */}
-      <div className="p-4 border-t border-border space-y-3">
+      {/* ── Collapse Toggle ── */}
+      <div className="border-t border-sidebar-border p-2">
         <button
-          onClick={toggleTheme}
-          className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-accent/50 transition-colors"
+          onClick={toggleCollapse}
+          className={cn(
+            'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-sidebar-foreground/50 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors',
+            collapsed && 'justify-center px-0'
+          )}
         >
-          <span className="flex items-center gap-3">
-            {theme === 'dark' ? (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            )}
-            {theme === 'dark' ? 'Dark' : 'Light'}
-          </span>
-          <span className="text-xs text-muted">
-            {theme === 'dark' ? '🌙' : '☀️'}
-          </span>
+          {collapsed ? (
+            <ChevronsRight className="h-4 w-4 shrink-0" />
+          ) : (
+            <>
+              <ChevronsLeft className="h-4 w-4 shrink-0" />
+              <span className="truncate">Collapse</span>
+              <kbd className="ml-auto hidden lg:inline-flex items-center rounded px-1 py-0.5 text-[10px] font-mono text-sidebar-foreground/30 border border-sidebar-border">
+                ⌘B
+              </kbd>
+            </>
+          )}
         </button>
-
-        <a
-          href="https://testara.dev"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-center text-xs text-muted hover:text-foreground transition-colors"
-        >
-          testara.dev
-        </a>
       </div>
     </aside>
   )
