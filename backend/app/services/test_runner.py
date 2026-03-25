@@ -251,6 +251,13 @@ try:
     options.no_reset = True
 
     driver = appium_webdriver.Remote(SERVER_URL, options=options)
+
+    # Set session name on BrowserStack
+    driver.execute_script("browserstack_executor: " + json.dumps({{
+        "action": "setSessionName",
+        "arguments": {{"name": SESSION_NAME}},
+    }}))
+
     _auto_login(driver)
 
     _old_stdout = sys.stdout
@@ -261,12 +268,26 @@ try:
     finally:
         sys.stdout = _old_stdout
 
+    # Mark test as passed on BrowserStack
+    driver.execute_script("browserstack_executor: " + json.dumps({{
+        "action": "setSessionStatus",
+        "arguments": {{"status": "passed", "reason": "All assertions passed"}},
+    }}))
+
     duration = _time.time() - start
     print(json.dumps({{"success": True, "error": None, "logs": _test_logs, "duration": round(duration, 2)}}))
     sys.exit(0)
 
 except AssertionError as e:
     duration = _time.time() - start
+    if driver:
+        try:
+            driver.execute_script("browserstack_executor: " + json.dumps({{
+                "action": "setSessionStatus",
+                "arguments": {{"status": "failed", "reason": f"Assertion failed: {{e}}"}},
+            }}))
+        except Exception:
+            pass
     print(json.dumps({{
         "success": False,
         "error": f"Assertion failed: {{e}}",
@@ -277,6 +298,14 @@ except AssertionError as e:
 
 except Exception as e:
     duration = _time.time() - start
+    if driver:
+        try:
+            driver.execute_script("browserstack_executor: " + json.dumps({{
+                "action": "setSessionStatus",
+                "arguments": {{"status": "failed", "reason": f"{{type(e).__name__}}: {{e}}"}},
+            }}))
+        except Exception:
+            pass
     print(json.dumps({{
         "success": False,
         "error": f"{{type(e).__name__}}: {{e}}",

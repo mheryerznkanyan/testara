@@ -1,10 +1,12 @@
 """Cloud execution routes — BrowserStack App Automate integration."""
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.services.browserstack_service import BrowserStackService, DEFAULT_DEVICES, get_browserstack_service
 
 logger = logging.getLogger(__name__)
@@ -83,9 +85,30 @@ async def upload_app(req: AppUploadRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+    # Persist app_url to .env so it's reused across restarts
+    try:
+        from app.core.config import _ENV_FILE
+        env_path = Path(_ENV_FILE)
+        if env_path.exists():
+            content = env_path.read_text()
+            if "BROWSERSTACK_APP_URL=" in content:
+                import re
+                content = re.sub(
+                    r"BROWSERSTACK_APP_URL=.*",
+                    f"BROWSERSTACK_APP_URL={app_url}",
+                    content,
+                )
+            else:
+                content += f"\nBROWSERSTACK_APP_URL={app_url}\n"
+            env_path.write_text(content)
+            settings.browserstack_app_url = app_url
+            logger.info("Saved BROWSERSTACK_APP_URL=%s to .env", app_url)
+    except Exception as e:
+        logger.warning("Could not persist app_url to .env: %s", e)
+
     return AppUploadResponse(
         app_url=app_url,
-        message=f"App uploaded successfully. Set BROWSERSTACK_APP_URL={app_url} in .env to reuse.",
+        message=f"App uploaded and saved to .env as BROWSERSTACK_APP_URL={app_url}",
     )
 
 
