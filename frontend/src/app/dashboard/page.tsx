@@ -35,6 +35,7 @@ import {
   Bar,
 } from 'recharts'
 import type { RunStatus } from '@/types'
+import { useRunStats, useRecentRuns, formatRelativeTime } from '@/lib/hooks'
 
 // --- Mock data ---
 
@@ -208,6 +209,53 @@ const stats = [
 // --- Page ---
 
 export default function DashboardPage() {
+  const { stats: liveStats, loading: statsLoading } = useRunStats()
+  const { runs: recentRuns, loading: runsLoading } = useRecentRuns(6)
+
+  // Map Supabase status to display status
+  const statusMap: Record<string, RunStatus> = {
+    passed: 'Passed',
+    failed: 'Failed',
+    running: 'Running',
+    queued: 'Running',
+  }
+
+  // Override static stats with live data when available
+  const liveStatsCards = [
+    {
+      label: 'Total Tests',
+      value: statsLoading ? '—' : liveStats.total.toLocaleString(),
+      trend: null,
+      icon: ClipboardList,
+      iconColor: 'text-blue-400',
+      iconBg: 'bg-blue-500/10',
+    },
+    {
+      label: 'Passed',
+      value: statsLoading ? '—' : liveStats.passed.toLocaleString(),
+      trend: null,
+      icon: CheckCircle,
+      iconColor: 'text-emerald-400',
+      iconBg: 'bg-emerald-500/10',
+    },
+    {
+      label: 'Failed',
+      value: statsLoading ? '—' : liveStats.failed.toLocaleString(),
+      trend: null,
+      icon: XCircle,
+      iconColor: 'text-red-400',
+      iconBg: 'bg-red-500/10',
+    },
+    {
+      label: 'Last Run',
+      value: statsLoading ? '—' : formatRelativeTime(liveStats.lastRunAt),
+      trend: null,
+      icon: Clock,
+      iconColor: 'text-amber-400',
+      iconBg: 'bg-amber-500/10',
+    },
+  ]
+
   return (
     <div className="h-full bg-background overflow-auto">
       <div className="max-w-7xl mx-auto px-8 py-8">
@@ -224,7 +272,7 @@ export default function DashboardPage() {
 
         {/* Stats Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {stats.map((stat) => {
+          {liveStatsCards.map((stat) => {
             const Icon = stat.icon
             return (
               <Card key={stat.label}>
@@ -239,40 +287,6 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-3xl font-bold tracking-tight text-foreground">
                     {stat.value}
-                  </div>
-                  <div className="flex items-center gap-1 mt-2">
-                    {stat.label === 'Failed' ? (
-                      // For "Failed", down is good (green) and up is bad (red)
-                      stat.trendUp ? (
-                        <TrendingUp className="w-3.5 h-3.5 text-red-400" />
-                      ) : (
-                        <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
-                      )
-                    ) : stat.label === 'Avg Duration' ? (
-                      // For "Avg Duration", down is good (green) and up is bad (red)
-                      stat.trendUp ? (
-                        <TrendingUp className="w-3.5 h-3.5 text-red-400" />
-                      ) : (
-                        <TrendingDown className="w-3.5 h-3.5 text-emerald-400" />
-                      )
-                    ) : stat.trendUp ? (
-                      <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <TrendingDown className="w-3.5 h-3.5 text-red-400" />
-                    )}
-                    <span
-                      className={`text-xs font-medium ${
-                        stat.label === 'Failed' || stat.label === 'Avg Duration'
-                          ? stat.trendUp
-                            ? 'text-red-400'
-                            : 'text-emerald-400'
-                          : stat.trendUp
-                            ? 'text-emerald-400'
-                            : 'text-red-400'
-                      }`}
-                    >
-                      {stat.trend}
-                    </span>
                   </div>
                 </CardContent>
               </Card>
@@ -388,20 +402,36 @@ export default function DashboardPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mockRuns.map((run) => (
-                  <TableRow key={run.id}>
-                    <TableCell className="font-medium">{run.testName}</TableCell>
-                    <TableCell className="text-muted-foreground">{run.suite}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={run.status} />
+                {runsLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      Loading runs...
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{run.device}</TableCell>
-                    <TableCell className="font-mono text-muted-foreground">
-                      {run.duration}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{run.date}</TableCell>
                   </TableRow>
-                ))}
+                ) : recentRuns.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      No test runs yet. Generate and run your first test!
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  recentRuns.map((run) => (
+                    <TableRow key={run.id}>
+                      <TableCell className="font-medium">{run.test_name}</TableCell>
+                      <TableCell className="text-muted-foreground">{run.suite_name || '—'}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={statusMap[run.status] || 'Running'} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{run.device || '—'}</TableCell>
+                      <TableCell className="font-mono text-muted-foreground">
+                        {run.duration ? `${run.duration}s` : '—'}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatRelativeTime(run.created_at)}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>
