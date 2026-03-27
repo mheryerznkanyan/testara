@@ -1,72 +1,60 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useTheme } from 'next-themes'
-import { Moon, Sun, Search, Bell } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import Link from 'next/link'
+import { Search, Bell, Settings, Smartphone } from 'lucide-react'
+import { useAuth } from '@/lib/auth-context'
 
 export function Header() {
-  const { theme, setTheme } = useTheme()
-  const [scrolled, setScrolled] = useState(false)
+  const { user } = useAuth()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
     setMounted(true)
-    const main = document.querySelector('main')
-    if (!main) return
-    const handler = () => setScrolled(main.scrollTop > 10)
-    main.addEventListener('scroll', handler, { passive: true })
-    return () => main.removeEventListener('scroll', handler)
   }, [])
 
+  const userInitial = user?.email?.[0]?.toUpperCase() || 'T'
+
   return (
-    <header
-      className={cn(
-        'sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/80 px-6 backdrop-blur-lg transition-shadow',
-        scrolled ? 'border-border shadow-sm' : 'border-transparent'
-      )}
-    >
-      {/* Search trigger */}
-      <button
-        className="flex h-8 flex-1 max-w-sm items-center gap-2 rounded-lg border border-border bg-surface-2/50 px-3 text-sm text-muted-foreground transition-colors hover:bg-surface-2"
-      >
-        <Search className="h-3.5 w-3.5" />
-        <span className="flex-1 text-left">Search...</span>
-        <kbd className="hidden sm:inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground/50 border border-border">
-          ⌘K
-        </kbd>
-      </button>
+    <header className="sticky top-0 z-50 glass-nav flex items-center justify-between px-6 h-16 w-full shadow-[0_0_15px_rgba(91,196,214,0.05)]">
+      {/* Left: Logo */}
+      <div className="flex items-center gap-4">
+        <Link href="/dashboard" className="flex items-center gap-2 md:hidden">
+          <Smartphone className="h-5 w-5 text-primary" />
+          <span className="text-lg font-bold tracking-tighter text-white uppercase font-headline">
+            Testara AI
+          </span>
+        </Link>
+      </div>
 
-      <div className="flex-1" />
+      {/* Right: Search + Actions */}
+      <div className="flex items-center gap-6">
+        {/* Search */}
+        <div className="hidden lg:flex items-center bg-surface-low px-4 py-2 rounded-xl border border-outline-variant/20 focus-within:border-primary transition-all duration-300">
+          <Search className="h-4 w-4 text-zinc-500" />
+          <input
+            className="bg-transparent border-none text-sm focus:ring-0 focus:outline-none text-white w-48 ml-2 font-label placeholder:text-zinc-600"
+            placeholder="Quick search..."
+            type="text"
+          />
+        </div>
 
-      {/* Right side actions */}
-      <div className="flex items-center gap-1">
-        {/* Notifications */}
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
-          <Bell className="h-4 w-4" />
-        </Button>
+        {/* Action Icons */}
+        <div className="flex items-center gap-4">
+          <button className="text-zinc-500 hover:text-primary transition-colors active:scale-95">
+            <Bell className="h-5 w-5" />
+          </button>
+          <Link href="/settings" className="text-zinc-500 hover:text-primary transition-colors active:scale-95">
+            <Settings className="h-5 w-5" />
+          </Link>
 
-        {/* Theme toggle */}
-        {mounted && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="h-8 w-8 text-muted-foreground"
-          >
-            {theme === 'dark' ? (
-              <Moon className="h-4 w-4" />
-            ) : (
-              <Sun className="h-4 w-4" />
-            )}
-          </Button>
-        )}
-
-        {/* User avatar */}
-        <button className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white hover:bg-blue-500 transition-colors">
-          M
-        </button>
+          {/* Avatar */}
+          {mounted && (
+            <div className="w-8 h-8 rounded-full border border-primary/20 overflow-hidden flex items-center justify-center bg-primary/10 text-primary text-xs font-bold">
+              {userInitial}
+            </div>
+          )}
+        </div>
       </div>
     </header>
   )

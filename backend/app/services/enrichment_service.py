@@ -109,7 +109,6 @@ class EnrichmentService:
             HumanMessage(
                 content=(
                     f"Enrich this iOS test description:\n\n{original}\n\n"
-                    "Use the app context above to make the enriched description more specific and relevant to this app. "
                     "Return only the enriched description text."
                 )
             ),

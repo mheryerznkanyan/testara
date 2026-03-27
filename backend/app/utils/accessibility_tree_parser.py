@@ -238,22 +238,30 @@ class MultiScreenSnapshot:
         return self.all_interactive_elements()
 
     def to_context_string(self) -> str:
-        """Format all screens for LLM context — compressed and deterministic."""
+        """Format all screens for LLM context — compressed, deduplicated, and deterministic."""
         if not self.screens:
             return "RUNTIME ACCESSIBILITY TREE: No screens captured."
 
-        lines = [
-            "RUNTIME ACCESSIBILITY TREE (compressed, from live app):",
-            "Type codes: [B]=Button [T]=Text [In]=TextField [Pw]=Password [C]=Cell [Img]=Image [Sw]=Switch [SF]=SearchField [Tab]=Tab [Lnk]=Link",
-            "Use \"name\" values with AppiumBy.ACCESSIBILITY_ID. Items (×N) are repeated N times.",
-            "",
-        ]
+        lines: list = []
+
+        # Deduplicate screens with identical element sets
+        seen_fingerprints: dict = {}  # fingerprint → (label, nav_path)
+        unique_screens = []
 
         for screen in self.screens:
             interactive = screen.interactive_elements()
             if not interactive:
                 continue
+            # Fingerprint = sorted set of (type, name) tuples
+            fingerprint = tuple(sorted({(e.element_type, e.name) for e in interactive if e.name}))
+            if fingerprint in seen_fingerprints:
+                # Duplicate screen — note it but don't add again
+                continue
+            seen_fingerprints[fingerprint] = (screen.screen_label, screen.navigation_path)
+            unique_screens.append(screen)
 
+        for screen in unique_screens:
+            interactive = screen.interactive_elements()
             compressed, counts = _compress_elements(interactive)
             if not compressed:
                 continue

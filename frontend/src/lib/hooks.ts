@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { supabase } from './supabase'
+import { apiFetch } from './api'
+import type { SuiteTest, SuiteWithStats } from '@/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,7 @@ export interface TestRun {
   test_name: string
   suite_id: string | null
   suite_name: string | null
+  suite_test_id: string | null
   status: 'passed' | 'failed' | 'running' | 'queued'
   device: string | null
   os_version: string | null
@@ -45,13 +47,8 @@ export function useRunStats() {
 
   useEffect(() => {
     async function load() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
-        .from('run_stats')
-        .select('*')
-        .single()
-
-      if (!error && data) {
+      try {
+        const data = await apiFetch<any>('/db/run-stats')
         setStats({
           total: Number(data.total) || 0,
           passed: Number(data.passed) || 0,
@@ -59,6 +56,8 @@ export function useRunStats() {
           running: Number(data.running) || 0,
           lastRunAt: data.last_run_at ?? null,
         })
+      } catch {
+        // keep defaults
       }
       setLoading(false)
     }
@@ -70,25 +69,24 @@ export function useRunStats() {
 
 // ── Test Runs ────────────────────────────────────────────────────────────────
 
-export function useTestRuns(filter?: 'passed' | 'failed' | 'running') {
+export function useTestRuns(filter?: 'passed' | 'failed' | 'running', suiteId?: string) {
   const [runs, setRuns] = useState<TestRun[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (supabase as any)
-      .from('test_runs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100)
-
-    if (filter) query = query.eq('status', filter)
-
-    const { data, error } = await query
-    if (!error && data) setRuns(data as TestRun[])
+    try {
+      const params = new URLSearchParams()
+      if (filter) params.set('status', filter)
+      if (suiteId) params.set('suite_id', suiteId)
+      const qs = params.toString()
+      const data = await apiFetch<TestRun[]>(`/db/test-runs${qs ? `?${qs}` : ''}`)
+      setRuns(data)
+    } catch {
+      // keep empty
+    }
     setLoading(false)
-  }, [filter])
+  }, [filter, suiteId])
 
   useEffect(() => { load() }, [load])
 
@@ -101,14 +99,12 @@ export function useRecentRuns(limit = 5) {
 
   useEffect(() => {
     async function load() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
-        .from('test_runs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit)
-
-      if (!error && data) setRuns(data as TestRun[])
+      try {
+        const data = await apiFetch<TestRun[]>(`/db/test-runs?limit=${limit}`)
+        setRuns(data)
+      } catch {
+        // keep empty
+      }
       setLoading(false)
     }
     load()
@@ -125,46 +121,129 @@ export function useSuites() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('suites')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (!error && data) setSuites(data as Suite[])
+    try {
+      const data = await apiFetch<Suite[]>('/db/suites')
+      setSuites(data)
+    } catch {
+      // keep empty
+    }
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
   const createSuite = async (name: string, description?: string) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('suites')
-      .insert({ name, description: description || null })
-      .select()
-      .single()
-
-    if (error) throw error
-    if (data) setSuites(prev => [data as Suite, ...prev])
-    return data as Suite
+    const data = await apiFetch<Suite>('/db/suites', {
+      method: 'POST',
+      body: JSON.stringify({ name, description: description || null }),
+    })
+    setSuites(prev => [data, ...prev])
+    return data
   }
 
-  return { suites, loading, refresh: load, createSuite }
+  const deleteSuite = async (suiteId: string) => {
+    await apiFetch(`/db/suites/${suiteId}`, { method: 'DELETE' })
+    setSuites(prev => prev.filter(s => s.id !== suiteId))
+  }
+
+  return { suites, loading, refresh: load, createSuite, deleteSuite }
+}
+
+// ── Suite Detail ─────────────────────────────────────────────────────────────
+
+export function useSuiteDetail(suiteId: string) {
+  const [suite, setSuite] = useState<SuiteWithStats | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await apiFetch<SuiteWithStats>(`/db/suites/${suiteId}`)
+      setSuite(data)
+    } catch {
+      setSuite(null)
+    }
+    setLoading(false)
+  }, [suiteId])
+
+  useEffect(() => { load() }, [load])
+
+  const updateSuite = async (updates: { name?: string; description?: string }) => {
+    const data = await apiFetch<SuiteWithStats>(`/db/suites/${suiteId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    })
+    setSuite(prev => prev ? { ...prev, ...data } : prev)
+    return data
+  }
+
+  return { suite, loading, refresh: load, updateSuite }
+}
+
+// ── Suite Tests ──────────────────────────────────────────────────────────────
+
+export function useSuiteTests(suiteId: string) {
+  const [tests, setTests] = useState<SuiteTest[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await apiFetch<SuiteTest[]>(`/db/suites/${suiteId}/tests`)
+      setTests(data)
+    } catch {
+      // keep empty
+    }
+    setLoading(false)
+  }, [suiteId])
+
+  useEffect(() => { load() }, [load])
+
+  const addTest = async (data: {
+    name: string
+    description?: string
+    test_code: string
+    class_name?: string
+    quality_score?: number
+    quality_grade?: string
+  }) => {
+    const created = await apiFetch<SuiteTest>(`/db/suites/${suiteId}/tests`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    setTests(prev => [...prev, created])
+    return created
+  }
+
+  const updateTest = async (testId: string, data: {
+    name?: string
+    description?: string
+    test_code?: string
+    class_name?: string
+  }) => {
+    const updated = await apiFetch<SuiteTest>(`/db/suites/${suiteId}/tests/${testId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+    setTests(prev => prev.map(t => t.id === testId ? updated : t))
+    return updated
+  }
+
+  const deleteTest = async (testId: string) => {
+    await apiFetch(`/db/suites/${suiteId}/tests/${testId}`, { method: 'DELETE' })
+    setTests(prev => prev.filter(t => t.id !== testId))
+  }
+
+  return { tests, loading, refresh: load, addTest, updateTest, deleteTest }
 }
 
 // ── Save a run result ─────────────────────────────────────────────────────────
 
 export async function saveTestRun(run: Omit<TestRun, 'id' | 'created_at'>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any)
-    .from('test_runs')
-    .insert(run)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data as TestRun
+  return apiFetch<TestRun>('/db/test-runs', {
+    method: 'POST',
+    body: JSON.stringify(run),
+  })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

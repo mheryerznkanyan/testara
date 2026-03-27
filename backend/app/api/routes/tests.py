@@ -50,48 +50,7 @@ async def _run_pipeline(
     enrichment = await asyncio.to_thread(enrichment_service.enrich, body.test_description)
     enriched_description = enrichment["enriched"]
 
-    # 2. RAG query
-    rag_context = rag_service.query(enriched_description, k=body.rag_top_k)
-
-    code_snippets_text = "\n\n".join(
-        f"// {s['kind']} from {s['path']}\n{s['content']}"
-        for s in rag_context["code_snippets"]
-    )
-
-    # Navigation context
-    navigation_context_str = ""
-    navigation_metadata = {}
-    if settings.project_root:
-        try:
-            nav_service = NavigationService(settings.project_root)
-            await asyncio.to_thread(nav_service.extract)
-            navigation_context_str = nav_service.format_for_prompt(enriched_description)
-            if navigation_context_str:
-                code_snippets_text = f"{navigation_context_str}\n\n{code_snippets_text}"
-                navigation_metadata["navigation_context_used"] = True
-                logger.info("Navigation context injected into prompt")
-        except Exception as e:
-            logger.warning("Failed to extract navigation context: %s", e)
-            navigation_metadata["navigation_context_error"] = str(e)
-
-    resolved_app_name = body.app_name or settings.default_app_name
-
-    app_context = AppContext(
-        app_name=resolved_app_name,
-        screens=rag_context["screens"],
-        accessibility_ids=rag_context["accessibility_ids"],
-        source_code_snippets=code_snippets_text or None,
-    )
-
-    gen_request = TestGenerationRequest(
-        test_description=enriched_description,
-        test_type=test_type,
-        app_context=app_context,
-        class_name=body.class_name,
-        include_comments=body.include_comments,
-    )
-
-    # 3. Load cached discovery snapshot
+    # 2. Load cached discovery snapshot FIRST
     accessibility_snapshot = None
     snapshot_path = Path(settings.rag_persist_dir) / "discovery_snapshot.json"
     if snapshot_path.exists():
@@ -105,7 +64,7 @@ async def _run_pipeline(
         except Exception as e:
             logger.warning("Could not load cached snapshot: %s", e)
 
-    # Fall back to live discovery if no cache
+    # Fall back to live local discovery if no cache
     if accessibility_snapshot is None and body.discovery_enabled:
         effective_bundle_id = body.bundle_id or settings.bundle_id
         effective_device_udid = body.device_udid or ""
@@ -145,6 +104,57 @@ async def _run_pipeline(
             except Exception as e:
                 logger.warning("Appium discovery failed (continuing without): %s", e)
 
+    # 3. RAG + Navigation — SKIP if discovery snapshot has good coverage
+    rag_context = {"screens": [], "accessibility_ids": [], "code_snippets": [], "total_docs_retrieved": 0}
+    navigation_metadata = {}
+    code_snippets_text = ""
+    use_rag = False
+
+    if accessibility_snapshot and len(accessibility_snapshot.interactive_elements()) >= 5:
+        # Discovery has enough elements — skip RAG and navigation (discovery-only mode)
+        logger.info("Discovery-only mode: %d interactive elements, skipping RAG and navigation",
+                     len(accessibility_snapshot.interactive_elements()))
+    else:
+        # No good discovery — fall back to RAG + navigation
+        use_rag = True
+        logger.info("Using RAG + navigation (no discovery or insufficient elements)")
+        rag_context = rag_service.query(enriched_description, k=body.rag_top_k)
+
+        code_snippets_text = "\n\n".join(
+            f"// {s['kind']} from {s['path']}\n{s['content']}"
+            for s in rag_context["code_snippets"]
+        )
+
+        if settings.project_root:
+            try:
+                nav_service = NavigationService(settings.project_root)
+                await asyncio.to_thread(nav_service.extract)
+                navigation_context_str = nav_service.format_for_prompt(enriched_description)
+                if navigation_context_str:
+                    code_snippets_text = f"{navigation_context_str}\n\n{code_snippets_text}"
+                    navigation_metadata["navigation_context_used"] = True
+                    logger.info("Navigation context injected into prompt")
+            except Exception as e:
+                logger.warning("Failed to extract navigation context: %s", e)
+                navigation_metadata["navigation_context_error"] = str(e)
+
+    resolved_app_name = body.app_name or settings.default_app_name
+
+    app_context = AppContext(
+        app_name=resolved_app_name,
+        screens=rag_context["screens"],
+        accessibility_ids=rag_context["accessibility_ids"],
+        source_code_snippets=code_snippets_text or None,
+    )
+
+    gen_request = TestGenerationRequest(
+        test_description=enriched_description,
+        test_type=test_type,
+        app_context=app_context,
+        class_name=body.class_name,
+        include_comments=body.include_comments,
+    )
+
     # 4. Generate test
     response = await asyncio.to_thread(
         generator.run, gen_request, accessibility_snapshot
@@ -156,7 +166,8 @@ async def _run_pipeline(
         "enrichment_used": enrichment["used"],
         **({"enrichment_error": enrichment["error"]} if "error" in enrichment else {}),
     }
-    response.metadata["rag_enabled"] = True
+    response.metadata["rag_enabled"] = use_rag
+    response.metadata["discovery_only"] = not use_rag
     response.metadata["rag_context"] = {
         "accessibility_ids_found": len(rag_context.get("accessibility_ids", [])),
         "screens_found": len(rag_context.get("screens", [])),

@@ -25,16 +25,27 @@ class TestExecutionRequest(BaseModel):
     device_udid: str = ""
     record_video: bool = False
     langsmith_run_id: Optional[str] = None
+    execution_mode: str = "local"  # "local" or "cloud"
+    cloud_device: Optional[str] = None      # e.g. "iPhone 15 Pro"
+    cloud_os_version: Optional[str] = None  # e.g. "17"
+    suite_id: Optional[str] = None
+    suite_test_id: Optional[str] = None
 
 
 class TestExecutionResponse(BaseModel):
     success: bool
     test_id: str
+    execution_mode: str = "local"
     video_url: Optional[str] = None
     logs: str = ""
     duration: float = 0.0
     error: Optional[str] = None
     screenshot: Optional[str] = None
+    # Cloud-specific
+    device: Optional[str] = None
+    os_version: Optional[str] = None
+    session_id: Optional[str] = None
+    browserstack_url: Optional[str] = None
 
 
 @router.post("/run-test", response_model=TestExecutionResponse)
@@ -56,6 +67,9 @@ async def run_test(request: Request, body: TestExecutionRequest):
             bundle_id=effective_bundle_id,
             device_udid=body.device_udid,
             record_video=body.record_video,
+            execution_mode=body.execution_mode,
+            cloud_device=body.cloud_device,
+            cloud_os_version=body.cloud_os_version,
         )
 
         video_url = None
@@ -107,14 +121,60 @@ async def run_test(request: Request, body: TestExecutionRequest):
             except Exception as e:
                 logger.warning("Failed to send LangSmith data: %s", e)
 
+        # Cloud execution returns extra fields
+        exec_mode = result.get("execution_mode", body.execution_mode)
+        cloud_video = result.get("video_url")  # BrowserStack CDN URL
+        final_video = cloud_video if exec_mode == "cloud" else video_url
+
+        # Persist to Supabase (optional — no-op if not configured)
+        try:
+            from app.services.supabase_service import save_test_run, get_supabase_client
+            run_data = {
+                "test_name": body.test_code[:80].split("\n")[0],
+                "status": "passed" if success else "failed",
+                "device": result.get("device") or body.cloud_device or settings.simulator_name,
+                "os_version": result.get("os_version") or body.cloud_os_version or "",
+                "duration": result.get("duration", 0),
+                "logs": result.get("logs", ""),
+                "error_message": result.get("error"),
+                "screenshot_url": screenshot_url,
+                "execution_mode": exec_mode,
+            }
+            if body.suite_id:
+                run_data["suite_id"] = body.suite_id
+            if body.suite_test_id:
+                run_data["suite_test_id"] = body.suite_test_id
+
+            saved_run = save_test_run(run_data)
+
+            # Update suite_tests.last_status if linked to a suite test
+            if body.suite_test_id and saved_run:
+                try:
+                    sb = get_supabase_client()
+                    if sb:
+                        sb.table("suite_tests").update({
+                            "last_status": "passed" if success else "failed",
+                            "last_run_at": saved_run.get("created_at"),
+                            "last_run_id": saved_run.get("id"),
+                        }).eq("id", body.suite_test_id).execute()
+                except Exception as e2:
+                    logger.warning("Failed to update suite_test status: %s", e2)
+        except Exception as e:
+            logger.warning("Failed to persist run to Supabase: %s", e)
+
         return TestExecutionResponse(
             success=success,
             test_id=result.get("test_id", ""),
-            video_url=video_url,
+            execution_mode=exec_mode,
+            video_url=final_video,
             logs=result.get("logs", ""),
             duration=result.get("duration", 0.0),
             error=result.get("error"),
             screenshot=screenshot_url,
+            device=result.get("device") or body.cloud_device,
+            os_version=result.get("os_version") or body.cloud_os_version,
+            session_id=result.get("session_id"),
+            browserstack_url=result.get("browserstack_url"),
         )
 
     except Exception as e:

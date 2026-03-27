@@ -1,8 +1,17 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('testara_token')
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
+  return headers
+}
+
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: { ...getAuthHeaders(), ...options?.headers as Record<string, string> },
     ...options,
   })
   if (!res.ok) {
@@ -31,7 +40,11 @@ export const runTest = (body: {
   bundle_id?: string
   device_udid?: string
   execution_mode?: 'local' | 'cloud'
+  cloud_device?: string
+  cloud_os_version?: string
   langsmith_run_id?: string
+  suite_id?: string
+  suite_test_id?: string
 }) => apiFetch<any>('/run-test', { method: 'POST', body: JSON.stringify(body) })
 
 // Simulators
@@ -39,9 +52,11 @@ export const getSimulators = () => apiFetch<{ devices: any[] }>('/simulators')
 
 // Cloud
 export const getCloudStatus = () => apiFetch<{
-  connected: boolean
-  defaultDevice?: string
-  osVersion?: string
+  enabled: boolean
+  credentials_valid?: boolean
+  app_url?: string | null
+  default_device?: string
+  os_version?: string
 }>('/cloud/status')
 
 export const getCloudDevices = () => apiFetch<any[]>('/cloud/devices/recommended')
@@ -51,5 +66,28 @@ export const uploadApp = (ipaPath: string) =>
     method: 'POST',
     body: JSON.stringify({ ipa_path: ipaPath }),
   })
+
+// Cloud discovery
+interface DiscoveryScreen {
+  name: string
+  element_count: number
+  navigation_path?: string
+}
+
+interface DiscoveryResponse {
+  success: boolean
+  screen_count: number
+  interactive_count: number
+  screens?: DiscoveryScreen[]
+  error?: string | null
+}
+
+export const getDiscoveryStatus = () => apiFetch<DiscoveryResponse>('/cloud/discover/status')
+
+export const cloudDiscover = (body: {
+  app_url?: string
+  device_name?: string
+  os_version?: string
+}) => apiFetch<DiscoveryResponse>('/cloud/discover', { method: 'POST', body: JSON.stringify(body) })
 
 export { API_BASE }

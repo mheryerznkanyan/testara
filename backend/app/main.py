@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.services.enrichment_service import EnrichmentService
 from app.services.test_generator import TestGenerator
 from app.services.rag_service import RAGService
-from app.api.routes import health, tests, execution, simulators, discovery, cloud
+from app.api.routes import health, tests, execution, simulators, discovery, cloud, db, auth
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +26,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _PUBLIC_PATHS = {
     "/", "/health", "/rag/status", "/docs", "/openapi.json", "/redoc",
-    "/run-test", "/generate-test-with-rag", "/recordings", "/simulators"
+    "/run-test", "/generate-test-with-rag", "/recordings", "/simulators",
+    "/auth/register", "/auth/login", "/auth/refresh", "/auth/logout",
+    "/auth/google/url", "/auth/google/callback",
+    "/cloud/discover",
 }
 
 
@@ -118,8 +121,9 @@ async def api_key_middleware(request: Request, call_next):
     Public paths (health, docs) are always allowed through.
     """
     if settings.api_key and request.url.path not in _PUBLIC_PATHS:
-        provided = request.headers.get("X-API-Key", "")
-        if provided != settings.api_key:
+        has_api_key = request.headers.get("X-API-Key", "") == settings.api_key
+        has_bearer = request.headers.get("Authorization", "").startswith("Bearer ")
+        if not has_api_key and not has_bearer:
             logger.warning(
                 "Unauthorized request to %s from %s",
                 request.url.path,
@@ -138,6 +142,8 @@ app.include_router(execution.router)
 app.include_router(simulators.router)
 app.include_router(discovery.router)
 app.include_router(cloud.router)
+app.include_router(db.router)
+app.include_router(auth.router)
 
 # Mount static files for video recordings
 from pathlib import Path

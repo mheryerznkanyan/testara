@@ -191,6 +191,7 @@ BUILD_NAME     = {build_name!r}
 SESSION_NAME   = {session_name!r}
 LOGIN_EMAIL    = {login_email!r}
 LOGIN_PASSWORD = {login_password!r}
+BUNDLE_ID      = {bundle_id!r}
 
 SERVER_URL = "https://hub-cloud.browserstack.com/wd/hub"
 
@@ -240,17 +241,18 @@ try:
         "accessKey":   BS_ACCESS_KEY,
         "deviceName":  DEVICE_NAME,
         "osVersion":   OS_VERSION,
-        "app":         BS_APP_URL,
         "projectName": "Testara",
         "buildName":   BUILD_NAME,
         "sessionName": SESSION_NAME,
         "networkLogs": True,
         "deviceLogs":  True,
     }})
+    options.set_capability("appium:app", BS_APP_URL)
     options.automation_name = "XCUITest"
     options.no_reset = True
 
     driver = appium_webdriver.Remote(SERVER_URL, options=options)
+    bs_session_id = driver.session_id  # Capture BrowserStack session ID
 
     # Set session name on BrowserStack
     driver.execute_script("browserstack_executor: " + json.dumps({{
@@ -258,7 +260,17 @@ try:
         "arguments": {{"name": SESSION_NAME}},
     }}))
 
-    _auto_login(driver)
+    # Reset app to launch screen so test starts fresh
+    if BUNDLE_ID:
+        try:
+            driver.terminate_app(BUNDLE_ID)
+            _time.sleep(1)
+            driver.activate_app(BUNDLE_ID)
+            _time.sleep(2)
+        except Exception:
+            pass
+
+    # NOTE: No auto-login here — let the test handle login if needed
 
     _old_stdout = sys.stdout
     sys.stdout  = io.StringIO()
@@ -275,11 +287,12 @@ try:
     }}))
 
     duration = _time.time() - start
-    print(json.dumps({{"success": True, "error": None, "logs": _test_logs, "duration": round(duration, 2)}}))
+    print(json.dumps({{"success": True, "error": None, "logs": _test_logs, "duration": round(duration, 2), "session_id": bs_session_id}}))
     sys.exit(0)
 
 except AssertionError as e:
     duration = _time.time() - start
+    _sid = driver.session_id if driver else None
     if driver:
         try:
             driver.execute_script("browserstack_executor: " + json.dumps({{
@@ -293,11 +306,13 @@ except AssertionError as e:
         "error": f"Assertion failed: {{e}}",
         "logs": traceback.format_exc(),
         "duration": round(duration, 2),
+        "session_id": _sid,
     }}))
     sys.exit(1)
 
 except Exception as e:
     duration = _time.time() - start
+    _sid = driver.session_id if driver else None
     if driver:
         try:
             driver.execute_script("browserstack_executor: " + json.dumps({{
@@ -311,6 +326,7 @@ except Exception as e:
         "error": f"{{type(e).__name__}}: {{e}}",
         "logs": traceback.format_exc(),
         "duration": round(duration, 2),
+        "session_id": _sid,
     }}))
     sys.exit(2)
 
@@ -350,6 +366,8 @@ class AppiumTestRunner:
         device_udid: str = "",
         record_video: bool = False,
         execution_mode: Literal["local", "cloud"] = "local",
+        cloud_device: Optional[str] = None,
+        cloud_os_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run a generated Python Appium test in an isolated subprocess.
 
@@ -357,6 +375,8 @@ class AppiumTestRunner:
             execution_mode: "local" uses local Appium server;
                             "cloud" uses BrowserStack App Automate.
                             Falls back to "local" if BS credentials are missing.
+            cloud_device: Device name for cloud execution (e.g. "iPhone 15 Pro")
+            cloud_os_version: OS version for cloud execution (e.g. "17")
         """
         test_id = str(uuid.uuid4())
         effective_bundle_id = bundle_id or self.bundle_id
@@ -367,7 +387,7 @@ class AppiumTestRunner:
             logger.warning("Cloud mode requested but BS credentials not configured — falling back to local")
 
         if use_cloud:
-            return await self._run_test_cloud(test_code, test_id)
+            return await self._run_test_cloud(test_code, test_id, cloud_device, cloud_os_version)
 
         # ── Local execution ───────────────────────────────────────────────────
         if not effective_bundle_id:
@@ -447,12 +467,19 @@ class AppiumTestRunner:
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
 
-    async def _run_test_cloud(self, test_code: str, test_id: str) -> Dict[str, Any]:
+    async def _run_test_cloud(
+        self, test_code: str, test_id: str,
+        cloud_device: Optional[str] = None, cloud_os_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Run test on BrowserStack App Automate."""
         from app.core.config import settings
         from app.services.browserstack_service import BrowserStackService
 
-        logger.info("=== Appium test run %s (BrowserStack cloud) ===", test_id)
+        # Use passed device or fall back to config
+        device_name = cloud_device or settings.browserstack_device
+        os_version = cloud_os_version or settings.browserstack_os_version
+
+        logger.info("=== Appium test run %s (BrowserStack cloud) === device=%s os=%s", test_id, device_name, os_version)
 
         # Resolve app URL: use pre-configured bs:// URL or upload IPA now
         app_url = settings.browserstack_app_url
@@ -462,8 +489,8 @@ class AppiumTestRunner:
                     "test_id": test_id,
                     "success": False,
                     "error": (
-                        "Cloud execution requires either BROWSERSTACK_APP_URL (bs:// URL from prior upload) "
-                        "or BROWSERSTACK_IPA_PATH pointing to a .ipa file."
+                        "Cloud execution requires an uploaded app. "
+                        "Upload your .ipa on the Cloud page first."
                     ),
                     "logs": "",
                     "duration": 0,
@@ -482,12 +509,13 @@ class AppiumTestRunner:
                 bs_username=settings.browserstack_username,
                 bs_access_key=settings.browserstack_access_key,
                 bs_app_url=app_url,
-                device_name=settings.browserstack_device,
-                os_version=settings.browserstack_os_version,
+                device_name=device_name,
+                os_version=os_version,
                 build_name="Testara Cloud",
                 session_name=test_id,
                 login_email=settings.test_credentials_email or "",
                 login_password=settings.test_credentials_password or "",
+                bundle_id=settings.bundle_id or "",
             )
             harness_file.write_text(harness_src)
 
@@ -500,16 +528,40 @@ class AppiumTestRunner:
             finally:
                 self.test_timeout = original_timeout
 
+            # Fetch session details from BrowserStack (video URL, dashboard link)
+            session_id = result.get("session_id")
+            video_url = None
+            browserstack_url = None
+
+            if session_id:
+                try:
+                    bs = BrowserStackService(settings.browserstack_username, settings.browserstack_access_key)
+                    # BrowserStack needs time to process the video after session ends
+                    for attempt in range(3):
+                        await asyncio.sleep(5)
+                        session_info = await bs.get_session(session_id)
+                        video_url = session_info.get("video_url")
+                        browserstack_url = session_info.get("browser_url")
+                        if video_url:
+                            break
+                        logger.info("BS session %s: video not ready yet (attempt %d/3)", session_id, attempt + 1)
+                    logger.info("BS session %s: video=%s", session_id, video_url)
+                except Exception as e:
+                    logger.warning("Failed to fetch BS session details: %s", e)
+
             return {
-                "test_id":        test_id,
-                "execution_mode": "cloud",
-                "provider":       "browserstack",
-                "device":         settings.browserstack_device,
-                "os_version":     settings.browserstack_os_version,
-                "success":        result.get("success", False),
-                "logs":           result.get("logs", ""),
-                "duration":       result.get("duration", 0),
-                "error":          result.get("error"),
+                "test_id":          test_id,
+                "execution_mode":   "cloud",
+                "provider":         "browserstack",
+                "device":           device_name,
+                "os_version":       os_version,
+                "success":          result.get("success", False),
+                "logs":             result.get("logs", ""),
+                "duration":         result.get("duration", 0),
+                "error":            result.get("error"),
+                "session_id":       session_id,
+                "video_url":        video_url,
+                "browserstack_url": browserstack_url,
             }
 
         except Exception as e:

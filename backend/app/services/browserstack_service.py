@@ -138,6 +138,26 @@ class BrowserStackService:
         }
 
     # ------------------------------------------------------------------
+    # Session details (video URL, dashboard link)
+    # ------------------------------------------------------------------
+
+    async def get_session(self, session_id: str) -> Dict[str, Any]:
+        """Fetch session details from BrowserStack App Automate API."""
+        url = f"https://api-cloud.browserstack.com/app-automate/sessions/{session_id}.json"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                auth=self._auth,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.warning("BS session fetch failed (%s): %s", resp.status, body)
+                    return {}
+                data = await resp.json()
+                return data.get("automation_session", {})
+
+    # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------
 

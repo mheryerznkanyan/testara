@@ -167,15 +167,22 @@ class TestGenerator:
                 len(accessibility_snapshot.interactive_elements()),
             )
 
-        user_message = (
-            f"Generate an Appium Python test function for the following:\n\n"
-            f"Test Description: {request.test_description}\n\n"
-            f"{runtime_section}"
-            f"{context_section}\n\n"
-            f"{class_name_section}\n\n"
-            f"Include comments: {request.include_comments}\n\n"
-            "Output ONLY Python code."
-        )
+        # Build user message — prioritize discovery tree, include RAG context only if present
+        parts = [
+            f"Generate an Appium Python test function for:\n\n"
+            f"Test Description: {request.test_description}\n",
+        ]
+        if runtime_section:
+            parts.append(runtime_section)
+        if context_section and "Known Accessibility IDs:" in context_section:
+            # RAG context has useful data — include it
+            parts.append(context_section)
+        parts.append(f"{class_name_section}")
+        if request.include_comments:
+            parts.append("Include inline comments explaining each step.")
+        parts.append("Output ONLY Python code.")
+
+        user_message = "\n\n".join(parts)
 
         messages = [
             SystemMessage(content=APPIUM_PYTEST_SYSTEM_PROMPT),
