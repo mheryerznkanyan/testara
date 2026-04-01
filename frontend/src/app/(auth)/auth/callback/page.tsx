@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { API_BASE } from '@/lib/api'
 import { Loader2 } from 'lucide-react'
 
 function CallbackHandler() {
@@ -50,7 +51,7 @@ function CallbackHandler() {
         }
 
         if (code) {
-          fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/google/callback`, {
+          fetch(`${API_BASE}/auth/google/callback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code }),
@@ -85,7 +86,7 @@ function CallbackHandler() {
         <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
           {error}
         </div>
-        <a href="/login" className="text-sm text-blue-400 hover:underline">
+        <a href="/login" className="text-sm text-primary hover:underline">
           Back to sign in
         </a>
       </div>
@@ -94,7 +95,7 @@ function CallbackHandler() {
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
       <p className="text-sm text-muted-foreground">Completing sign-in...</p>
     </div>
   )
@@ -105,7 +106,7 @@ export default function AuthCallbackPage() {
     <Suspense
       fallback={
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">Loading...</p>
         </div>
       }
