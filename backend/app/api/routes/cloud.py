@@ -73,24 +73,20 @@ async def upload_app(
     req: Optional[AppUploadRequest] = None,
 ):
     """
-    Upload an .ipa file to the cloud and return an app URL.
+    Upload an .ipa file and return an app URL.
     Accepts either:
       - A multipart file upload (file field)
       - A JSON body with ipa_path (local file path)
-    """
-    bs = get_browserstack_service()
-    if not bs:
-        raise HTTPException(
-            status_code=400,
-            detail="Cloud infrastructure is not configured.",
-        )
 
+    If BrowserStack is configured the IPA is forwarded there and a bs:// URL
+    is returned.  Otherwise the file is stored locally under uploads/ and a
+    local file:// path is returned (self-hosted Mac mode).
+    """
     ipa_path = None
     tmp_path = None
 
     try:
         if file and file.filename:
-            # Save uploaded file to a temp location
             suffix = Path(file.filename).suffix or ".ipa"
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
             content = await file.read()
@@ -103,44 +99,61 @@ async def upload_app(
         else:
             raise HTTPException(status_code=400, detail="Provide either a file upload or ipa_path")
 
-        app_url = await bs.upload_app(ipa_path, custom_id="testara-app")
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        bs = get_browserstack_service()
+        if bs:
+            # ── Cloud path: forward to BrowserStack ──────────────────────────
+            try:
+                app_url = await bs.upload_app(ipa_path, custom_id="testara-app")
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RuntimeError as e:
+                raise HTTPException(status_code=502, detail=str(e))
+
+            # Persist to .env
+            try:
+                from app.core.config import _ENV_FILE
+                import re as _re
+                env_path = Path(_ENV_FILE)
+                if env_path.exists():
+                    env_content = env_path.read_text()
+                    if "BROWSERSTACK_APP_URL=" in env_content:
+                        env_content = _re.sub(r"BROWSERSTACK_APP_URL=.*", f"BROWSERSTACK_APP_URL={app_url}", env_content)
+                    else:
+                        env_content += f"\nBROWSERSTACK_APP_URL={app_url}\n"
+                    env_path.write_text(env_content)
+                    settings.browserstack_app_url = app_url
+                    logger.info("Saved BROWSERSTACK_APP_URL=%s to .env", app_url)
+            except Exception as e:
+                logger.warning("Could not persist app_url to .env: %s", e)
+
+            message = f"App uploaded to BrowserStack — {app_url}"
+        else:
+            # ── Local path: save to uploads/ (self-hosted Mac mode) ───────────
+            uploads_dir = Path(settings.rag_persist_dir).parent / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+
+            original_name = Path(file.filename).name if file and file.filename else Path(ipa_path).name
+            dest = uploads_dir / original_name
+            # Avoid overwriting — append a counter if needed
+            counter = 1
+            while dest.exists():
+                dest = uploads_dir / f"{Path(original_name).stem}_{counter}{Path(original_name).suffix}"
+                counter += 1
+
+            import shutil
+            shutil.copy2(ipa_path, dest)
+            app_url = str(dest)
+            logger.info("IPA saved locally (self-hosted mode): %s", dest)
+            message = f"App saved locally — {dest}"
+
     finally:
-        # Clean up temp file
         if tmp_path:
             try:
                 Path(tmp_path).unlink(missing_ok=True)
             except Exception:
                 pass
 
-    # Persist app_url to .env so it's reused across restarts
-    try:
-        from app.core.config import _ENV_FILE
-        env_path = Path(_ENV_FILE)
-        if env_path.exists():
-            content = env_path.read_text()
-            if "BROWSERSTACK_APP_URL=" in content:
-                import re
-                content = re.sub(
-                    r"BROWSERSTACK_APP_URL=.*",
-                    f"BROWSERSTACK_APP_URL={app_url}",
-                    content,
-                )
-            else:
-                content += f"\nBROWSERSTACK_APP_URL={app_url}\n"
-            env_path.write_text(content)
-            settings.browserstack_app_url = app_url
-            logger.info("Saved BROWSERSTACK_APP_URL=%s to .env", app_url)
-    except Exception as e:
-        logger.warning("Could not persist app_url to .env: %s", e)
-
-    return AppUploadResponse(
-        app_url=app_url,
-        message=f"App uploaded and saved to .env as BROWSERSTACK_APP_URL={app_url}",
-    )
+    return AppUploadResponse(app_url=app_url, message=message)
 
 
 @router.get("/devices", response_model=DeviceListResponse)
