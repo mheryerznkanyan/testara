@@ -36,6 +36,47 @@ def get_supabase_anon_client():
     return None
 
 
+# ── Storage ───────────────────────────────────────────────────────────────────
+
+APPS_BUCKET = "apps"
+
+
+def upload_app_to_storage(file_path: str, dest_name: str) -> str:
+    """
+    Upload a zip/ipa file to Supabase Storage (bucket: 'apps').
+    Returns the public URL of the uploaded file.
+    Raises RuntimeError on failure.
+    """
+    client = get_supabase_client()
+    if not client:
+        raise RuntimeError("Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env")
+
+    with open(file_path, "rb") as f:
+        data = f.read()
+
+    mime = "application/zip" if dest_name.endswith(".zip") else "application/octet-stream"
+
+    try:
+        # Remove existing file silently so re-uploads don't fail
+        try:
+            client.storage.from_(APPS_BUCKET).remove([dest_name])
+        except Exception:
+            pass
+
+        client.storage.from_(APPS_BUCKET).upload(
+            dest_name,
+            data,
+            {"content-type": mime, "upsert": "true"},
+        )
+    except Exception as e:
+        raise RuntimeError(f"Supabase storage upload failed: {e}") from e
+
+    from app.core.config import settings
+    public_url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{APPS_BUCKET}/{dest_name}"
+    logger.info("App uploaded to Supabase Storage: %s", public_url)
+    return public_url
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def save_test_run(data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Dict]:

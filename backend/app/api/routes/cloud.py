@@ -1,4 +1,5 @@
 """Cloud execution routes — Testara Cloud (powered by real device infrastructure)."""
+import asyncio
 import logging
 import tempfile
 from pathlib import Path
@@ -99,52 +100,16 @@ async def upload_app(
         else:
             raise HTTPException(status_code=400, detail="Provide either a file upload or ipa_path")
 
-        bs = get_browserstack_service()
-        if bs:
-            # ── Cloud path: forward to BrowserStack ──────────────────────────
-            try:
-                app_url = await bs.upload_app(ipa_path, custom_id="testara-app")
-            except FileNotFoundError as e:
-                raise HTTPException(status_code=404, detail=str(e))
-            except RuntimeError as e:
-                raise HTTPException(status_code=502, detail=str(e))
-
-            # Persist to .env
-            try:
-                from app.core.config import _ENV_FILE
-                import re as _re
-                env_path = Path(_ENV_FILE)
-                if env_path.exists():
-                    env_content = env_path.read_text()
-                    if "BROWSERSTACK_APP_URL=" in env_content:
-                        env_content = _re.sub(r"BROWSERSTACK_APP_URL=.*", f"BROWSERSTACK_APP_URL={app_url}", env_content)
-                    else:
-                        env_content += f"\nBROWSERSTACK_APP_URL={app_url}\n"
-                    env_path.write_text(env_content)
-                    settings.browserstack_app_url = app_url
-                    logger.info("Saved BROWSERSTACK_APP_URL=%s to .env", app_url)
-            except Exception as e:
-                logger.warning("Could not persist app_url to .env: %s", e)
-
-            message = f"App uploaded to BrowserStack — {app_url}"
-        else:
-            # ── Local path: save to uploads/ (self-hosted Mac mode) ───────────
-            uploads_dir = Path(settings.rag_persist_dir).parent / "uploads"
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-
-            original_name = Path(file.filename).name if file and file.filename else Path(ipa_path).name
-            dest = uploads_dir / original_name
-            # Avoid overwriting — append a counter if needed
-            counter = 1
-            while dest.exists():
-                dest = uploads_dir / f"{Path(original_name).stem}_{counter}{Path(original_name).suffix}"
-                counter += 1
-
-            import shutil
-            shutil.copy2(ipa_path, dest)
-            app_url = str(dest)
-            logger.info("IPA saved locally (self-hosted mode): %s", dest)
-            message = f"App saved locally — {dest}"
+        # ── Upload to Supabase Storage ────────────────────────────────────────
+        from app.services.supabase_service import upload_app_to_storage
+        original_name = Path(file.filename).name if file and file.filename else Path(ipa_path).name
+        try:
+            app_url = await asyncio.get_event_loop().run_in_executor(
+                None, upload_app_to_storage, ipa_path, original_name
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        message = f"App uploaded to Supabase Storage — {app_url}"
 
     finally:
         if tmp_path:

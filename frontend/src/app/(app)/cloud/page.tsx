@@ -133,7 +133,7 @@ export default function CloudPage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation(); setIsDragging(false)
     const file = e.dataTransfer.files?.[0]
-    if (file && file.name.endsWith('.ipa')) { setUploadFile(file) } else { toast.error('Please drop a valid .ipa file') }
+    if (file && (file.name.endsWith('.ipa') || file.name.endsWith('.zip'))) { setUploadFile(file) } else { toast.error('Please drop a valid .ipa or .zip file') }
   }
 
   const handleUpload = async () => {
@@ -221,7 +221,7 @@ export default function CloudPage() {
               <CardTitle className="text-sm flex items-center gap-2">
                 <Upload className="h-4 w-4 text-zinc-500" /> Your App
               </CardTitle>
-              <CardDescription>Upload your .ipa to run tests in the cloud</CardDescription>
+              <CardDescription>Upload your .zip or .ipa to run tests in the cloud</CardDescription>
             </CardHeader>
             <CardContent>
               {uploadedUrl ? (
@@ -251,12 +251,12 @@ export default function CloudPage() {
                       <p className="text-sm text-white font-medium">{uploadFile.name}</p>
                     ) : (
                       <>
-                        <p className="text-sm text-zinc-500">Drop .ipa here</p>
+                        <p className="text-sm text-zinc-500">Drop .zip or .ipa here</p>
                         <p className="text-[10px] text-zinc-700 mt-1 font-label uppercase tracking-widest">or click to browse</p>
                       </>
                     )}
                   </div>
-                  <input ref={fileInputRef} type="file" accept=".ipa" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setUploadFile(f) }} />
+                  <input ref={fileInputRef} type="file" accept=".ipa,.zip" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setUploadFile(f) }} />
                   <Button onClick={handleUpload} disabled={!uploadFile || uploadLoading} className="w-full">
                     {uploadLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Uploading...</> : <><Upload className="h-4 w-4" />Upload</>}
                   </Button>
@@ -377,7 +377,7 @@ export default function CloudPage() {
               <div className="space-y-3">
                 <p className="text-xs text-zinc-500">
                   {(!uploadedUrl && !cloudStatus?.app_url)
-                    ? 'Upload your .ipa first, then discover the app.'
+                    ? 'Upload your .zip or .ipa first, then discover the app.'
                     : `Will launch on ${selectedDevice} and capture all screens. Takes 30-90 seconds.`
                   }
                 </p>
