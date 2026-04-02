@@ -17,7 +17,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/page-header'
-import { API_BASE, getCloudStatus, getCloudDevices, cloudDiscover, getDiscoveryStatus } from '@/lib/api'
+import { API_BASE, getCloudStatus, getCloudDevices, getMacSimulators, cloudDiscover, getDiscoveryStatus } from '@/lib/api'
 
 interface CloudStatus {
   enabled: boolean
@@ -107,6 +107,19 @@ export default function CloudPage() {
   }
 
   const fetchDevices = async () => {
+    // Try self-hosted Mac simulators first, fall back to cloud device list
+    try {
+      const data = await getMacSimulators()
+      if (data?.devices?.length > 0) {
+        setDevices(data.devices.map((d: any) => ({
+          name: d.name,
+          os: d.os || `iOS ${d.os_version}`,
+          os_version: String(d.os_version),
+          state: d.state,
+        })))
+        return
+      }
+    } catch {}
     try {
       const data = await getCloudDevices()
       if (Array.isArray(data) && data.length > 0) {

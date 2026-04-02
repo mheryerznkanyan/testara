@@ -180,6 +180,33 @@ async def recommended_devices():
         return [{"name": d["device"], "os_version": d["os_version"]} for d in DEFAULT_DEVICES]
 
 
+# ── Simulator Device List (self-hosted Mac) ───────────────────────────────────
+
+@router.get("/devices/simulators")
+async def list_simulators():
+    """
+    Fetch available iOS simulators from the self-hosted Mac device server.
+    Requires DEVICE_SERVER_URL env var pointing to the Mac running device_server.py
+    e.g. http://195.82.45.157:4724
+    """
+    device_server_url = settings.device_server_url
+    if not device_server_url:
+        raise HTTPException(
+            status_code=503,
+            detail="DEVICE_SERVER_URL is not configured. Run scripts/device_server.py on your Mac and set the env var.",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{device_server_url.rstrip('/')}/devices")
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Device server timed out. Is device_server.py running on your Mac?")
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach device server: {e}")
+
+
 # ── Cloud Discovery ────────────────────────────────────────────────────────────
 
 class CloudDiscoveryRequest(BaseModel):

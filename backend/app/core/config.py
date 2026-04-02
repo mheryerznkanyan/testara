@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Appium discovery settings
     appium_enabled: bool = False
     appium_server_url: str = "http://localhost:4723"
+    device_server_url: str = ""  # e.g. http://195.82.45.157:4724
     appium_startup_timeout: int = 30
     appium_discovery_timeout: int = 60
     appium_test_timeout: int = 120

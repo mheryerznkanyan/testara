@@ -60,6 +60,7 @@ export const getCloudStatus = () => apiFetch<{
 }>('/cloud/status')
 
 export const getCloudDevices = () => apiFetch<any[]>('/cloud/devices/recommended')
+export const getMacSimulators = () => apiFetch<{ devices: any[]; total: number }>('/cloud/devices/simulators')
 
 export const uploadApp = (ipaPath: string) =>
   apiFetch<{ app_url: string; message: string }>('/cloud/upload', {
