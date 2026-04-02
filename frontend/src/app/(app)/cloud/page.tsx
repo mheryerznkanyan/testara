@@ -142,7 +142,12 @@ export default function CloudPage() {
     try {
       const formData = new FormData()
       formData.append('file', uploadFile)
-      const res = await fetch(`${API_BASE}/cloud/upload`, { method: 'POST', body: formData })
+      const token = typeof window !== 'undefined' ? localStorage.getItem('testara_token') : null
+      const res = await fetch(`${API_BASE}/cloud/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      })
       if (res.ok) {
         const data = await res.json()
         setUploadedUrl(data.app_url || data.url || 'Uploaded')
